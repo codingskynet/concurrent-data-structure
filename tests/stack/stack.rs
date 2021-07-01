@@ -23,3 +23,18 @@ fn test_stack() {
     assert_eq!(stack.is_empty(), true);
     assert_eq!(stack.pop(), None);
 }
+
+#[test]
+fn test_deep_stack() {
+    let mut stack = Stack::new();
+
+    for n in 1..1e8 as i32 {
+        stack.push(n);
+    }
+
+    for n in (1..1e8 as i32).rev() {
+        assert_eq!(stack.pop(), Some(n));
+    }
+
+    assert_eq!(stack.is_empty(), true);
+}

@@ -1,7 +1,8 @@
-use std::mem;
+use std::{mem, ptr::null};
 
-pub struct Stack<T> {
-    head: Option<Box<Node<T>>>
+pub struct Queue<T> {
+    head: Option<Box<Node<T>>>,
+    tail: *mut Box<Node<T>>,
 }
 
 struct Node<T> {
@@ -18,10 +19,11 @@ impl<T> Node<T> {
     }
 }
 
-impl<T> Stack<T> {
-    pub fn new() -> Stack<T> {
-        Stack {
-            head: None
+impl<T> Queue<T> {
+    pub fn new() -> Queue<T> {
+        Queue {
+            head: None,
+            tail: null::<T>() as *mut _,
         }
     }
 
@@ -38,9 +40,16 @@ impl<T> Stack<T> {
 
     pub fn push(&mut self, data: T) {
         let node = Box::new(Node::new(data));
-        
-        let prev = mem::replace(&mut self.head, Some(node));
-        self.head.as_mut().unwrap().next = prev;
+
+        if self.head.is_none() {
+            self.head = Some(node);
+            self.tail = self.head.as_mut().unwrap() as *mut _;
+        } else {
+            unsafe {
+                (*self.tail).next = Some(node);
+                self.tail = (*self.tail).next.as_mut().unwrap() as *mut _;
+            }
+        }
     }
 
     pub fn pop(&mut self) -> Option<T> {
