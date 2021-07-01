@@ -48,7 +48,7 @@ impl<T> Stack<T> {
             let mut top = mem::replace(&mut self.head, None);
             self.head = mem::replace(&mut top.as_mut().unwrap().next, None);
 
-            return Some((*top.unwrap()).data) // TODO: top.unwrap().data vs (*top.unwrap()).data: the latter case has memory leak?
+            return Some(top.unwrap().data)
         }
 
         None
