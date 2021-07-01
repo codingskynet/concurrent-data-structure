@@ -1,0 +1,7 @@
+[package]
+name = "CDS"
+version = "0.1.0"
+authors = ["Taewoo An <taewoo.an@kaist.ac.kr>"]
+edition = "2018"
+
+[dependencies]
