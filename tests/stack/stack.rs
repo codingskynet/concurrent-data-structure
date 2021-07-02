@@ -1,4 +1,4 @@
-use cds::stack::stack::*;
+use cds::stack::Stack;
 
 #[test]
 fn test_stack() {

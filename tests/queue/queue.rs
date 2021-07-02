@@ -1,4 +1,4 @@
-use cds::queue::queue::*;
+use cds::queue::Queue;
 
 #[test]
 fn test_queue() {

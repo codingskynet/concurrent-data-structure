@@ -5,7 +5,7 @@ Implement sequential, lock-based and lock-free concurrent data structures below:
 
 |            | Stack | Queue | Linked List | AVL Tree | Red-Black Tree |
 |------------|-------|-------|-------------|----------|----------------|
-| Sequential |       |       |             |          |                |
+| Sequential |   O   |   O   |      O      |          |                |
 | Lock-based |       |       |             |          |                |
 | Lock-free  |       |       |             |          |                |
 
@@ -27,4 +27,6 @@ TODO: ?
 
 ## Reference
 - The Art of Multiprocessor Programming
+- https://stanford-ppl.github.io/website/papers/ppopp207-bronson.pdf
 - https://www.cs.tau.ac.il/~shanir/concurrent-data-structures.pdf
+- http://www.vldb.org/pvldb/vol4/p795-sewall.pdf
