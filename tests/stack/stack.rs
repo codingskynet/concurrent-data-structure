@@ -28,11 +28,11 @@ fn test_stack() {
 fn test_deep_stack() {
     let mut stack = Stack::new();
 
-    for n in 1..1e8 as i32 {
+    for n in 1..100_000 {
         stack.push(n);
     }
 
-    for n in (1..1e8 as i32).rev() {
+    for n in (1..100_000).rev() {
         assert_eq!(stack.pop(), Some(n));
     }
 

@@ -28,11 +28,11 @@ fn test_queue() {
 fn test_deep_queue() {
     let mut queue = Queue::new();
 
-    for n in 1..1e8 as i32 {
+    for n in 1..100_000 {
         queue.push(n);
     }
 
-    for n in 1..1e8 as i32{
+    for n in 1..100_000 {
         assert_eq!(queue.pop(), Some(n));
     }
 

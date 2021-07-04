@@ -1,3 +1,4 @@
+use crate::util::map::stress_sequential;
 use cds::linkedlist::LinkedList;
 use cds::map::SequentialMap;
 
@@ -36,4 +37,9 @@ fn test_linkedlist() {
     assert_eq!(list.lookup(&0), Some(&0));
     assert_eq!(list.remove(&0), Ok(0));
     assert_eq!(list.lookup(&0), None);
+}
+
+#[test]
+fn stress_linkedlist() {
+    stress_sequential::<String, LinkedList<_, _>>(100_000)
 }

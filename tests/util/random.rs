@@ -1,5 +1,4 @@
 use rand::{distributions::Alphanumeric, prelude::ThreadRng, Rng};
-
 pub trait Random {
     fn gen(rng: &mut ThreadRng) -> Self;
 }
