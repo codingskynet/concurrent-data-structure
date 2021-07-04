@@ -1,17 +1,9 @@
 use std::mem;
-use crate::sequential::SequentialMap;
+use crate::map::SequentialMap;
 
 // simple sequential linked list
-pub struct LinkedList<K: Eq + Copy, V> {
+pub struct LinkedList<K: Eq + Clone, V> {
     head: Option<Box<Node<K, V>>>,
-}
-
-impl<K: Eq + Copy, V> LinkedList<K, V> {
-    pub fn new() -> LinkedList<K, V> {
-        LinkedList {
-            head: None
-        }
-    }
 }
 
 struct Node<K: Eq, V> {
@@ -30,7 +22,13 @@ impl<K: Eq, V> Node<K, V> {
     }
 }
 
-impl<K: Eq + Copy, V> SequentialMap<K, V> for LinkedList<K, V> {
+impl<K: Ord + Clone, V> SequentialMap<K, V> for LinkedList<K, V> {
+    fn new() -> LinkedList<K, V> {
+        LinkedList {
+            head: None
+        }
+    }
+
     fn insert(&mut self, key: &K, value: V) -> Result<(), V> {
         let node = Box::new(Node::new(key.clone(), value));
 
@@ -75,7 +73,7 @@ impl<K: Eq + Copy, V> SequentialMap<K, V> for LinkedList<K, V> {
         }
     }
 
-    fn delete(&mut self, key: &K) -> Result<V, ()> {
+    fn remove(&mut self, key: &K) -> Result<V, ()> {
         if self.head.is_some() {
             if self.head.as_ref().unwrap().key == *key {
                 let mut node = mem::replace(&mut self.head, None);
