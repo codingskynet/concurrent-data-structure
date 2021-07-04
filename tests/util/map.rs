@@ -77,7 +77,7 @@ where
                     assert_eq!(ref_map.remove(&not_existing_key), None);
                     assert_eq!(map.remove(&not_existing_key), Err(()));
 
-                    println!("[{:0>10}] DeleteNone: ({:?}, Err)", i, not_existing_key);
+                    println!("[{:0>10}] RemoveNone: ({:?}, Err)", i, not_existing_key);
                 }
             }
         } else {
@@ -113,7 +113,7 @@ where
                     assert_eq!(map.remove(&existing_key).ok(), data);
 
                     println!(
-                        "[{:0>10}] DeleteSome: ({:?}, {})",
+                        "[{:0>10}] RemoveSome: ({:?}, {})",
                         i,
                         existing_key,
                         data.unwrap()
