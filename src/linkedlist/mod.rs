@@ -1,9 +1,8 @@
-use std::mem;
 use crate::map::SequentialMap;
 
 // simple sequential linked list
-pub struct LinkedList<K: Eq + Clone, V> {
-    head: Option<Box<Node<K, V>>>,
+pub struct LinkedList<K: Default + Eq + Clone, V: Default> {
+    head: Node<K, V>, // dummy node with key = Default, but the key is not considered on algorithm
 }
 
 struct Node<K: Eq, V> {
@@ -12,98 +11,101 @@ struct Node<K: Eq, V> {
     next: Option<Box<Node<K, V>>>,
 }
 
-impl<K: Eq, V> Node<K, V> {
-    fn new(key: K, value: V) -> Node<K, V> {
+impl<K: Default + Eq, V: Default> Default for Node<K, V> {
+    fn default() -> Self {
         Node {
-            key,
-            value, 
-            next: None
+            key: K::default(),
+            value: V::default(),
+            next: None,
         }
     }
 }
 
-impl<K: Ord + Clone, V> SequentialMap<K, V> for LinkedList<K, V> {
+impl<K: Eq, V> Node<K, V> {
+    fn new(key: K, value: V) -> Node<K, V> {
+        Node {
+            key,
+            value,
+            next: None,
+        }
+    }
+}
+
+impl<K: Default + Ord + Clone, V: Default> SequentialMap<K, V> for LinkedList<K, V> {
     fn new() -> LinkedList<K, V> {
         LinkedList {
-            head: None
+            head: Node::default(),
         }
     }
 
     fn insert(&mut self, key: &K, value: V) -> Result<(), V> {
-        let node = Box::new(Node::new(key.clone(), value));
+        let new = Box::new(Node::new(key.clone(), value));
 
-        if self.head.is_none() {
-            self.head = Some(node);
-            return Ok(())
-        }
-
-        let mut current = self.head.as_mut().unwrap();
+        let mut current = &mut self.head.next;
 
         loop {
-            if current.key == *key {
-                return Err(node.value)
-            }
+            match current {
+                Some(node) => {
+                    if node.key == *key {
+                        return Err(new.value);
+                    }
 
-            if current.next.is_none() {
-                current.next = Some(node);
-                return Ok(());
+                    current = &mut node.next;
+                }
+                None => {
+                    *current = Some(new);
+                    return Ok(());
+                }
             }
-
-            current = current.next.as_mut().unwrap();
         }
     }
 
     fn lookup(&self, key: &K) -> Option<&V> {
-        if self.head.is_none() {
-            return None
-        }
-
-        let mut current = self.head.as_ref().unwrap();
+        let mut current = &self.head.next;
 
         loop {
-            if current.key == *key {
-                return Some(&current.value)
-            }
+            match current {
+                Some(node) => {
+                    let value = &node.value;
 
-            if current.next.is_some() {
-                current = current.next.as_ref().unwrap();
-            } else {
-                return None
+                    if node.key == *key {
+                        return Some(value);
+                    }
+
+                    current = &node.next;
+                }
+                None => return None,
             }
         }
     }
 
     fn remove(&mut self, key: &K) -> Result<V, ()> {
-        if self.head.is_some() {
-            if self.head.as_ref().unwrap().key == *key {
-                let mut node = mem::replace(&mut self.head, None);
-                self.head = mem::replace(&mut node.as_mut().unwrap().next, None);
-
-                return Ok(node.unwrap().value)
-            }
-        } else {
-            return Err(())
-        }
-
-        if self.head.is_none() {
-            return Err(())
-        }
-
-        let mut prev = self.head.as_mut().unwrap();
+        let mut prev = &mut self.head;
 
         loop {
-            if prev.next.is_none() {
-                return Err(())
+            match prev.next.is_some() {
+                true => {
+                    if prev.next.as_ref().unwrap().key == *key {
+                        let mut node = prev.next.take();
+                        prev.next = node.as_mut().unwrap().next.take();
+
+                        return Ok(node.unwrap().value);
+                    }
+
+                    prev = prev.next.as_mut().unwrap();
+                }
+                false => return Err(()),
             }
+        }
+    }
+}
 
-            if prev.next.as_ref().unwrap().key == *key {
-                let mut node = mem::replace(&mut prev.next, None);
-                prev.next = mem::replace(&mut node.as_mut().unwrap().next, None);
+impl<K: Default + Eq + Clone, V: Default> Drop for LinkedList<K, V> {
+    fn drop(&mut self) {
+        let mut node = self.head.next.take();
 
-                return Ok(node.unwrap().value)
-            }
-
-            prev = prev.next.as_mut().unwrap();
+        while let Some(mut inside) = node {
+            node = inside.next.take();
         }
     }
 }
