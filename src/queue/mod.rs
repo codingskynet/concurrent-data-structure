@@ -64,3 +64,9 @@ impl<V> Queue<V> {
         None
     }
 }
+
+impl<V> Drop for Queue<V> {
+    fn drop(&mut self) {
+        while self.pop().is_some() {}
+    }
+}

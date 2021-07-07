@@ -55,3 +55,9 @@ impl<V> Stack<V> {
         None
     }
 }
+
+impl<V> Drop for Stack<V> {
+    fn drop(&mut self) {
+        while self.pop().is_some() {}
+    }
+}
