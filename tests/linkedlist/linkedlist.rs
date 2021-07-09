@@ -41,5 +41,5 @@ fn test_linkedlist() {
 
 #[test]
 fn stress_linkedlist() {
-    stress_sequential::<String, LinkedList<_, _>>(100_000)
+    stress_sequential::<String, LinkedList<_, _>>(100_000);
 }
