@@ -31,8 +31,8 @@ where
 
     #[derive(PartialEq)]
     enum OperationType {
-        Some, // the operation for existing (key, value) on the map
-        None, // the operation for not existing (key, value) on the map
+        Some, // the operation for existing key on the map
+        None, // the operation for not existing key on the map
     }
 
     let ops = [Operation::Insert, Operation::Lookup, Operation::Remove];
