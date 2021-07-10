@@ -57,27 +57,24 @@ where
                     // should success
                     let data: u64 = rng.gen();
 
-                    assert_eq!(map.insert(&not_existing_key, data), Ok(()));
-                    assert_eq!(ref_map.insert(not_existing_key.clone(), data), None);
-
                     println!(
                         "[{:0>10}] InsertNone: ({:?}, {})",
                         i, not_existing_key, data
                     );
+                    assert_eq!(map.insert(&not_existing_key, data), Ok(()));
+                    assert_eq!(ref_map.insert(not_existing_key.clone(), data), None);
                 }
                 Operation::Lookup => {
                     // should fail
+                    println!("[{:0>10}] LookupNone: ({:?}, None)", i, not_existing_key);
                     assert_eq!(ref_map.get(&not_existing_key), None);
                     assert_eq!(map.lookup(&not_existing_key), None);
-
-                    println!("[{:0>10}] LookupNone: ({:?}, None)", i, not_existing_key);
                 }
                 Operation::Remove => {
                     // should fail
+                    println!("[{:0>10}] RemoveNone: ({:?}, Err)", i, not_existing_key);
                     assert_eq!(ref_map.remove(&not_existing_key), None);
                     assert_eq!(map.remove(&not_existing_key), Err(()));
-
-                    println!("[{:0>10}] RemoveNone: ({:?}, Err)", i, not_existing_key);
                 }
             }
         } else {
@@ -89,15 +86,12 @@ where
                     // should fail
                     let data: u64 = rng.gen();
 
-                    assert_eq!(map.insert(&existing_key, data), Err(data));
-
                     println!("[{:0>10}] InsertSome: ({:?}, {})", i, existing_key, data);
+                    assert_eq!(map.insert(&existing_key, data), Err(data));
                 }
                 Operation::Lookup => {
                     // should success
                     let data = ref_map.get(&existing_key);
-
-                    assert_eq!(map.lookup(&existing_key), data);
 
                     println!(
                         "[{:0>10}] LookupSome: ({:?}, {})",
@@ -105,12 +99,11 @@ where
                         existing_key,
                         data.unwrap()
                     );
+                    assert_eq!(map.lookup(&existing_key), data);
                 }
                 Operation::Remove => {
                     // should success
                     let data = ref_map.remove(&existing_key);
-
-                    assert_eq!(map.remove(&existing_key).ok(), data);
 
                     println!(
                         "[{:0>10}] RemoveSome: ({:?}, {})",
@@ -118,6 +111,11 @@ where
                         existing_key,
                         data.unwrap()
                     );
+                    assert_eq!(map.remove(&existing_key).ok(), data);
+
+                    for key in ref_map.keys().collect::<Vec<&K>>() {
+                        assert_eq!(map.lookup(key).is_some(), true, "the key {:?} is not found.", key);
+                    }
                 }
             }
         }

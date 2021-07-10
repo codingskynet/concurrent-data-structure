@@ -1,6 +1,14 @@
 use crate::map::SequentialMap;
-use std::{cmp::max, fmt::Debug, mem, ops::DerefMut, ptr::{NonNull, drop_in_place}};
+use std::{
+    cmp::max,
+    fmt::Debug,
+    mem,
+    ops::DerefMut,
+    ptr::{drop_in_place, NonNull},
+};
 
+// how to show the structure of node
+// use: unsafe { println!("Show tree info:\n{:?}", self.root.as_ref()) };
 pub struct AVLTree<K: Ord + Clone, V> {
     root: NonNull<Node<K, V>>, // root node is dummy for simplicity
 }
@@ -27,13 +35,7 @@ where
     V: Default,
 {
     fn default() -> Self {
-        Node {
-            key: K::default(),
-            value: V::default(),
-            height: 0,
-            left: None,
-            right: None,
-        }
+        Self::new(K::default(), V::default())
     }
 }
 
@@ -45,6 +47,14 @@ impl<K, V> Node<K, V> {
             height: 1,
             left: None,
             right: None,
+        }
+    }
+
+    fn child_mut(&mut self, dir: Dir) -> &mut Option<Box<Node<K, V>>> {
+        match dir {
+            Dir::Left => &mut self.left,
+            Dir::Right => &mut self.right,
+            Dir::Eq => panic!("There is no 'eq' child"),
         }
     }
 
@@ -157,14 +167,35 @@ where
         }
     }
 
+    fn find_largest_on_left_subtree(&mut self) {
+        if self.dir != Dir::Eq {
+            panic!("The node is not arrived at Eq.")
+        }
+
+        self.dir = Dir::Left;
+        if self.next_node().is_none() {
+            self.dir = Dir::Eq;
+            return;
+        }
+        self.move_next();
+
+        self.dir = Dir::Right;
+        while self.next_node().is_some() {
+            self.move_next();
+        }
+
+        self.dir = Dir::Eq;
+    }
+
     fn rebalance(&mut self) {
         let parent_rotate_left = |mut node: Box<Node<K, V>>| -> Box<Node<K, V>> {
             let child_factor = node.right.as_ref().unwrap().get_factor();
 
             if child_factor > 0 {
                 let right_child = node.right.take().unwrap();
-                node.right = Some(Node::rotate_right(right_child));
-                node.right.as_mut().unwrap().right.as_mut().unwrap().renew_height();
+                let mut right_child = Node::rotate_right(right_child);
+                right_child.right.as_mut().unwrap().renew_height();
+                node.right = Some(right_child);
             }
 
             Node::rotate_left(node)
@@ -175,8 +206,9 @@ where
 
             if child_factor < 0 {
                 let left_child = node.left.take().unwrap();
-                node.left = Some(Node::rotate_left(left_child));
-                node.left.as_mut().unwrap().left.as_mut().unwrap().renew_height();
+                let mut left_child = Node::rotate_left(left_child);
+                left_child.left.as_mut().unwrap().renew_height();
+                node.left = Some(left_child);
             }
 
             Node::rotate_right(node)
@@ -196,15 +228,17 @@ where
 
             match factor {
                 -2 => {
-                    *target = Some(parent_rotate_left(target.take().unwrap()));
-                    target.as_mut().unwrap().left.as_mut().unwrap().renew_height();
-                    target.as_mut().unwrap().renew_height();
+                    let mut new_target = parent_rotate_left(target.take().unwrap());
+                    new_target.left.as_mut().unwrap().renew_height();
+                    new_target.renew_height();
+                    *target = Some(new_target);
                 }
                 -1..=1 => target.as_mut().unwrap().renew_height(),
                 2 => {
-                    *target = Some(parent_rotate_right(target.take().unwrap()));
-                    target.as_mut().unwrap().right.as_mut().unwrap().renew_height();
-                    target.as_mut().unwrap().renew_height();
+                    let mut new_target = parent_rotate_right(target.take().unwrap());
+                    new_target.right.as_mut().unwrap().renew_height();
+                    new_target.renew_height();
+                    *target = Some(new_target);
                 }
                 _ => unreachable!(),
             }
@@ -277,8 +311,6 @@ where
         }
         cursor.rebalance();
 
-        // unsafe { println!("Show tree info:\n{:?}", self.root.as_ref()) };
-
         Ok(())
     }
 
@@ -295,7 +327,64 @@ where
     }
 
     fn remove(&mut self, key: &K) -> Result<V, ()> {
-        todo!()
+        let mut cursor = self.find(key);
+
+        if cursor.dir != Dir::Eq {
+            return Err(());
+        }
+
+        let current = unsafe { cursor.current.as_ref() };
+
+        match (current.left.is_some(), current.right.is_some()) {
+            // find largest node from left subtree, swap, and remove
+            (true, true) => {
+                let (mut parent, dir) = cursor.ancestors.last_mut().unwrap();
+                let child = unsafe { parent.as_mut().child_mut(*dir).as_mut().unwrap() };
+
+                cursor.find_largest_on_left_subtree();
+
+                let (mut swap_node_parent, dir) = cursor.ancestors.pop().unwrap();
+                let swap_node_ptr = unsafe { swap_node_parent.as_mut().child_mut(dir) };
+                let swap_node = swap_node_ptr.as_mut().unwrap();
+
+                mem::swap(&mut child.key, &mut swap_node.key);
+                mem::swap(&mut child.value, &mut swap_node.value);
+
+                let swap_node = swap_node_ptr.take().unwrap();
+                if swap_node.left.is_some() {
+                    *swap_node_ptr = swap_node.left;
+                }
+
+                cursor.rebalance();
+
+                Ok(swap_node.value)
+            }
+            (true, false) => {
+                let (mut parent, dir) = cursor.ancestors.pop().unwrap();
+                let child = unsafe { parent.as_mut().child_mut(dir) };
+                let node = child.take().unwrap();
+                *child = node.left;
+                cursor.rebalance();
+
+                Ok(node.value)
+            }
+            (false, true) => {
+                let (mut parent, dir) = cursor.ancestors.pop().unwrap();
+                let child = unsafe { parent.as_mut().child_mut(dir) };
+                let node = child.take().unwrap();
+                *child = node.right;
+                cursor.rebalance();
+
+                Ok(node.value)
+            }
+            (false, false) => {
+                let (mut parent, dir) = cursor.ancestors.pop().unwrap();
+                let node = unsafe { parent.as_mut().child_mut(dir).take() };
+                cursor.rebalance();
+
+                Ok(node.unwrap().value)
+            }
+        }
     }
 }
 
