@@ -11,16 +11,15 @@ fn test_avl_tree() {
     // assert_eq!(avl.insert(&4, 4), Ok(()));
     // assert_eq!(avl.insert(&5, 5), Ok(()));
 
-    for i in 0..65536 {
+    for i in 0..65535 {
         assert_eq!(avl.insert(&i, i), Ok(()));
-        println!("[{}] height: {}", i, avl.get_height());
     }
 
-    for i in 0..65536 {
+    assert_eq!(avl.get_height(), 16);
+
+    for i in 0..65535 {
         assert_eq!(avl.lookup(&i), Some(&i));
     }
-
-    println!("height: {}", avl.get_height());
 }
 
 #[test]

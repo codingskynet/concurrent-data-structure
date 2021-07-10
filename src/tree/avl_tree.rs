@@ -1,5 +1,5 @@
 use crate::map::SequentialMap;
-use std::{cmp::max, fmt::Debug, marker::PhantomData, mem, ptr::NonNull};
+use std::{cmp::max, fmt::Debug, marker::PhantomData, mem, ops::DerefMut, ptr::NonNull};
 
 pub struct AVLTree<K: Ord + Clone, V> {
     root: NonNull<Node<K, V>>, // root node is dummy for simplicity
@@ -153,7 +153,7 @@ where
                 Dir::Eq => panic!("The node is already arrived."),
             };
 
-            let parent = mem::replace(&mut self.current, NonNull::new(&mut **next).unwrap());
+            let parent = mem::replace(&mut self.current, NonNull::new(next.deref_mut()).unwrap());
             self.ancestors.push((parent, self.dir));
         }
     }
