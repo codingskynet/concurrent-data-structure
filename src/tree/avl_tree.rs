@@ -1,9 +1,8 @@
 use crate::map::SequentialMap;
-use std::{cmp::max, fmt::Debug, marker::PhantomData, mem, ops::DerefMut, ptr::NonNull};
+use std::{cmp::max, fmt::Debug, mem, ops::DerefMut, ptr::{NonNull, drop_in_place}};
 
 pub struct AVLTree<K: Ord + Clone, V> {
     root: NonNull<Node<K, V>>, // root node is dummy for simplicity
-    marker: PhantomData<Box<Node<K, V>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -257,7 +256,6 @@ where
 
         let tree = AVLTree {
             root: Box::leak(root).into(),
-            marker: PhantomData,
         };
 
         tree
@@ -298,5 +296,13 @@ where
 
     fn remove(&mut self, key: &K) -> Result<V, ()> {
         todo!()
+    }
+}
+
+impl<K: Ord + Clone, V> Drop for AVLTree<K, V> {
+    fn drop(&mut self) {
+        // since the struct had 'pointer' instead of 'ownership' of the root,
+        // manually drop the root. Then, the childs are dropped recursively.
+        unsafe { drop_in_place(self.root.as_mut()) };
     }
 }
