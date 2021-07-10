@@ -1,17 +1,19 @@
 use crate::map::SequentialMap;
-use std::{cmp::max, mem, ptr::NonNull};
+use std::{cmp::max, fmt::Debug, marker::PhantomData, mem, ptr::NonNull};
 
 pub struct AVLTree<K: Ord + Clone, V> {
-    root: NonNull<Box<Node<K, V>>>, // root node is dummy for simplicity
+    root: NonNull<Node<K, V>>, // root node is dummy for simplicity
+    marker: PhantomData<Box<Node<K, V>>>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Dir {
     Left,
     Eq,
     Right,
 }
 
+#[derive(Debug)]
 struct Node<K, V> {
     key: K,
     value: V,
@@ -86,10 +88,7 @@ impl<K, V> Node<K, V> {
     fn rotate_left(mut node: Box<Node<K, V>>) -> Box<Node<K, V>> {
         let mut new_parent = node.right.take().unwrap();
         let _ = mem::replace(&mut node.right, new_parent.left);
-        node.renew_height();
-
         new_parent.left = Some(node);
-        new_parent.renew_height();
 
         new_parent
     }
@@ -97,29 +96,33 @@ impl<K, V> Node<K, V> {
     fn rotate_right(mut node: Box<Node<K, V>>) -> Box<Node<K, V>> {
         let mut new_parent = node.left.take().unwrap();
         let _ = mem::replace(&mut node.left, new_parent.right);
-        node.renew_height();
-
         new_parent.right = Some(node);
-        new_parent.renew_height();
 
         new_parent
     }
 }
 
 // manage each node's infomation
+#[derive(Debug)]
 struct Cursor<K, V> {
-    ancestors: Vec<(NonNull<Box<Node<K, V>>>, Dir)>,
-    current: NonNull<Box<Node<K, V>>>,
+    ancestors: Vec<(NonNull<Node<K, V>>, Dir)>,
+    current: NonNull<Node<K, V>>,
     dir: Dir,
 }
 
-impl<'c, K: Default + Ord + Clone, V: Default> Cursor<K, V> {
+impl<'c, K, V> Cursor<K, V>
+where
+    K: Default + Ord + Clone + Debug,
+    V: Default + Debug,
+{
     fn new(tree: &AVLTree<K, V>) -> Cursor<K, V> {
-        Cursor {
+        let cursor = Cursor {
             ancestors: vec![],
             current: tree.root,
             dir: Dir::Right,
-        }
+        };
+
+        cursor
     }
 
     fn next_node(&self) -> Option<&Box<Node<K, V>>> {
@@ -150,7 +153,7 @@ impl<'c, K: Default + Ord + Clone, V: Default> Cursor<K, V> {
                 Dir::Eq => panic!("The node is already arrived."),
             };
 
-            let parent = mem::replace(&mut self.current, NonNull::new(next).unwrap());
+            let parent = mem::replace(&mut self.current, NonNull::new(&mut **next).unwrap());
             self.ancestors.push((parent, self.dir));
         }
     }
@@ -162,6 +165,7 @@ impl<'c, K: Default + Ord + Clone, V: Default> Cursor<K, V> {
             if child_factor > 0 {
                 let right_child = node.right.take().unwrap();
                 node.right = Some(Node::rotate_right(right_child));
+                node.right.as_mut().unwrap().right.as_mut().unwrap().renew_height();
             }
 
             Node::rotate_left(node)
@@ -173,6 +177,7 @@ impl<'c, K: Default + Ord + Clone, V: Default> Cursor<K, V> {
             if child_factor < 0 {
                 let left_child = node.left.take().unwrap();
                 node.left = Some(Node::rotate_left(left_child));
+                node.left.as_mut().unwrap().left.as_mut().unwrap().renew_height();
             }
 
             Node::rotate_right(node)
@@ -191,9 +196,17 @@ impl<'c, K: Default + Ord + Clone, V: Default> Cursor<K, V> {
             let factor = target.as_ref().unwrap().get_factor();
 
             match factor {
-                -2 => *target = Some(parent_rotate_left(target.take().unwrap())),
-                -1..=1 => {}
-                2 => *target = Some(parent_rotate_right(target.take().unwrap())),
+                -2 => {
+                    *target = Some(parent_rotate_left(target.take().unwrap()));
+                    target.as_mut().unwrap().left.as_mut().unwrap().renew_height();
+                    target.as_mut().unwrap().renew_height();
+                }
+                -1..=1 => target.as_mut().unwrap().renew_height(),
+                2 => {
+                    *target = Some(parent_rotate_right(target.take().unwrap()));
+                    target.as_mut().unwrap().right.as_mut().unwrap().renew_height();
+                    target.as_mut().unwrap().renew_height();
+                }
                 _ => unreachable!(),
             }
         }
@@ -202,8 +215,8 @@ impl<'c, K: Default + Ord + Clone, V: Default> Cursor<K, V> {
 
 impl<K, V> AVLTree<K, V>
 where
-    K: Default + Ord + Clone,
-    V: Default,
+    K: Default + Ord + Clone + Debug,
+    V: Default + Debug,
 {
     fn find(&self, key: &K) -> Cursor<K, V> {
         let mut cursor = Cursor::new(self);
@@ -228,19 +241,26 @@ where
             }
         }
     }
+
+    pub fn get_height(&self) -> usize {
+        unsafe { self.root.as_ref().right.as_ref().unwrap().height }
+    }
 }
 
 impl<K, V> SequentialMap<K, V> for AVLTree<K, V>
 where
-    K: Default + Ord + Clone,
-    V: Default,
+    K: Default + Ord + Clone + Debug,
+    V: Default + Debug,
 {
     fn new() -> Self {
-        let mut root = Box::new(Node::default());
+        let root = Box::new(Node::default());
 
-        AVLTree {
-            root: NonNull::new(&mut root).unwrap(), // dummy node
-        }
+        let tree = AVLTree {
+            root: Box::leak(root).into(),
+            marker: PhantomData,
+        };
+
+        tree
     }
 
     fn insert(&mut self, key: &K, value: V) -> Result<(), V> {
@@ -253,7 +273,13 @@ where
         }
 
         *(cursor.next_node_mut()) = Some(node);
+
+        unsafe {
+            cursor.current.as_mut().renew_height();
+        }
         cursor.rebalance();
+
+        // unsafe { println!("Show tree info:\n{:?}", self.root.as_ref()) };
 
         Ok(())
     }
