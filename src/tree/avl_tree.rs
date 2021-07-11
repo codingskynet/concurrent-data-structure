@@ -335,56 +335,44 @@ where
 
         let current = unsafe { cursor.current.as_ref() };
 
-        match (current.left.is_some(), current.right.is_some()) {
-            // find largest node from left subtree, swap, and remove
-            (true, true) => {
-                let (mut parent, dir) = cursor.ancestors.last_mut().unwrap();
-                let child = unsafe { parent.as_mut().child_mut(*dir).as_mut().unwrap() };
+        let (left, right) = (current.left.is_some(), current.right.is_some());
 
-                cursor.find_largest_on_left_subtree();
+        // special case: find largest node from left subtree, swap, and remove
+        if left && right {
+            let (mut parent, dir) = cursor.ancestors.last_mut().unwrap();
+            let child = unsafe { parent.as_mut().child_mut(*dir).as_mut().unwrap() };
 
-                let (mut swap_node_parent, dir) = cursor.ancestors.pop().unwrap();
-                let swap_node_ptr = unsafe { swap_node_parent.as_mut().child_mut(dir) };
-                let swap_node = swap_node_ptr.as_mut().unwrap();
+            cursor.find_largest_on_left_subtree();
 
-                mem::swap(&mut child.key, &mut swap_node.key);
-                mem::swap(&mut child.value, &mut swap_node.value);
+            let (mut swap_node_parent, dir) = cursor.ancestors.pop().unwrap();
+            let swap_node_ptr = unsafe { swap_node_parent.as_mut().child_mut(dir) };
+            let swap_node = swap_node_ptr.as_mut().unwrap();
 
-                let swap_node = swap_node_ptr.take().unwrap();
-                if swap_node.left.is_some() {
-                    *swap_node_ptr = swap_node.left;
-                }
+            mem::swap(&mut child.key, &mut swap_node.key);
+            mem::swap(&mut child.value, &mut swap_node.value);
 
-                cursor.rebalance();
-
-                Ok(swap_node.value)
+            let swap_node = swap_node_ptr.take().unwrap();
+            if swap_node.left.is_some() {
+                *swap_node_ptr = swap_node.left;
             }
-            (true, false) => {
-                let (mut parent, dir) = cursor.ancestors.pop().unwrap();
-                let child = unsafe { parent.as_mut().child_mut(dir) };
-                let node = child.take().unwrap();
-                *child = node.left;
-                cursor.rebalance();
 
-                Ok(node.value)
-            }
-            (false, true) => {
-                let (mut parent, dir) = cursor.ancestors.pop().unwrap();
-                let child = unsafe { parent.as_mut().child_mut(dir) };
-                let node = child.take().unwrap();
-                *child = node.right;
-                cursor.rebalance();
+            cursor.rebalance();
 
-                Ok(node.value)
-            }
-            (false, false) => {
-                let (mut parent, dir) = cursor.ancestors.pop().unwrap();
-                let node = unsafe { parent.as_mut().child_mut(dir).take() };
-                cursor.rebalance();
-
-                Ok(node.unwrap().value)
-            }
+            return Ok(swap_node.value);
         }
+
+        let (mut parent, dir) = cursor.ancestors.pop().unwrap();
+        let child = unsafe { parent.as_mut().child_mut(dir) };
+        let node = child.take().unwrap();
+
+        if left {
+            *child = node.left;
+        } else if right {
+            *child = node.right;
+        }
+
+        cursor.rebalance();
+        Ok(node.value)
     }
 }
 
