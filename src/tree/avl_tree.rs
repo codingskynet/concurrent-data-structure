@@ -171,7 +171,7 @@ where
 
     /// move the cursor to the direction
     ///
-    /// The cursor's dir is never changed by any functions. You should change it maually like `cursor.dir = Dir::Left`.
+    /// The cursor's dir is never changed by any functions. You should change it manually like `cursor.dir = Dir::Left`.
     fn move_next(&mut self) {
         unsafe {
             let next = match self.dir {
