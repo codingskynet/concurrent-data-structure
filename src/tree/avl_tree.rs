@@ -50,14 +50,16 @@ impl<K, V> Node<K, V> {
         }
     }
 
+    /// get the mutable reference of the child of the node by dir
     fn child_mut(&mut self, dir: Dir) -> &mut Option<Box<Node<K, V>>> {
         match dir {
             Dir::Left => &mut self.left,
             Dir::Right => &mut self.right,
-            Dir::Eq => panic!("There is no 'eq' child"),
+            Dir::Eq => panic!("There is no 'Eq' child"),
         }
     }
 
+    /// renew the height of the node from the childs
     fn renew_height(&mut self) {
         let left_height = if let Some(node) = &self.left {
             node.height
@@ -74,6 +76,7 @@ impl<K, V> Node<K, V> {
         self.height = max(left_height, right_height) + 1;
     }
 
+    /// get difference of the heights from the childs
     fn get_factor(&self) -> isize {
         let left_height = if let Some(node) = &self.left {
             node.height
@@ -94,6 +97,9 @@ impl<K, V> Node<K, V> {
         }
     }
 
+    /// rotate left the node
+    ///
+    /// Change Parent-Right Child to Left Child-Parent, then return new parent(old right child).
     fn rotate_left(mut node: Box<Node<K, V>>) -> Box<Node<K, V>> {
         let mut new_parent = node.right.take().unwrap();
         let _ = mem::replace(&mut node.right, new_parent.left);
@@ -102,6 +108,9 @@ impl<K, V> Node<K, V> {
         new_parent
     }
 
+    /// rotate right the node
+    ///
+    /// Change Left Child-Parent to Parent-Right Child, then return new parent(old left child).
     fn rotate_right(mut node: Box<Node<K, V>>) -> Box<Node<K, V>> {
         let mut new_parent = node.left.take().unwrap();
         let _ = mem::replace(&mut node.left, new_parent.right);
@@ -111,7 +120,11 @@ impl<K, V> Node<K, V> {
     }
 }
 
-// manage each node's infomation
+/// manage the current state of the node
+///
+/// ancestors: the parents of the node
+/// current: the node which it sees now.
+/// dir: the direction that it moves on next. If Eq, the cursor cannot move since it arrived the destination node.
 #[derive(Debug)]
 struct Cursor<K, V> {
     ancestors: Vec<(NonNull<Node<K, V>>, Dir)>,
@@ -134,6 +147,7 @@ where
         cursor
     }
 
+    /// get the immutable reference of the next node by the direction
     fn next_node(&self) -> Option<&Box<Node<K, V>>> {
         unsafe {
             match self.dir {
@@ -144,6 +158,7 @@ where
         }
     }
 
+    /// get the mutable reference of the next node by the direction
     fn next_node_mut(&mut self) -> &mut Option<Box<Node<K, V>>> {
         unsafe {
             match self.dir {
@@ -154,6 +169,9 @@ where
         }
     }
 
+    /// move the cursor to the direction
+    ///
+    /// The cursor's dir is never changed by any functions. You should change it maually like `cursor.dir = Dir::Left`.
     fn move_next(&mut self) {
         unsafe {
             let next = match self.dir {
@@ -167,7 +185,10 @@ where
         }
     }
 
-    fn find_largest_on_left_subtree(&mut self) {
+    /// move the node that has the greatest key on the left subtree
+    ///
+    /// This function is for removing the node that has two nodes.
+    fn move_greatest_on_left_subtree(&mut self) {
         if self.dir != Dir::Eq {
             panic!("The node is not arrived at Eq.")
         }
@@ -187,6 +208,7 @@ where
         self.dir = Dir::Eq;
     }
 
+    /// rebalance the nodes by the rule of AVL using the cursor's ancestors
     fn rebalance(&mut self) {
         let parent_rotate_left = |mut node: Box<Node<K, V>>| -> Box<Node<K, V>> {
             let child_factor = node.right.as_ref().unwrap().get_factor();
@@ -251,6 +273,11 @@ where
     K: Default + Ord + Clone + Debug,
     V: Default + Debug,
 {
+    /// find the last state of the cursor by the key
+    ///
+    /// If there exists the key on the tree, the cursor's current is the node and the dir is Eq.
+    /// If there does not exist the key on the tree, the cursor's current is leaf node and the dir is
+    /// Left if the key is greater than the key of the node, or Right if the key is less than.
     fn find(&self, key: &K) -> Cursor<K, V> {
         let mut cursor = Cursor::new(self);
 
@@ -275,6 +302,7 @@ where
         }
     }
 
+    /// get the height of the tree
     pub fn get_height(&self) -> usize {
         unsafe { self.root.as_ref().right.as_ref().unwrap().height }
     }
@@ -342,7 +370,7 @@ where
             let (mut parent, dir) = cursor.ancestors.last_mut().unwrap();
             let child = unsafe { parent.as_mut().child_mut(*dir).as_mut().unwrap() };
 
-            cursor.find_largest_on_left_subtree();
+            cursor.move_greatest_on_left_subtree();
 
             let (mut swap_node_parent, dir) = cursor.ancestors.pop().unwrap();
             let swap_node_ptr = unsafe { swap_node_parent.as_mut().child_mut(dir) };
