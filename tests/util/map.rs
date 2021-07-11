@@ -1,6 +1,5 @@
-use crate::util::random::Random;
-
 use cds::map::SequentialMap;
+use cds::util::random::Random;
 use rand::prelude::SliceRandom;
 use rand::prelude::ThreadRng;
 use rand::thread_rng;
