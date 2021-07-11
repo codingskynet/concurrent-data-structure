@@ -1,5 +1,8 @@
+use std::{collections::BTreeMap, time::Instant};
+
 use crate::util::map::stress_sequential;
 use cds::{map::SequentialMap, tree::avl_tree::AVLTree};
+use rand::{Rng, thread_rng};
 
 #[test]
 fn test_avl_tree_insert_lookup() {
@@ -68,4 +71,57 @@ fn test_avl_tree_remove() {
 #[test]
 fn stress_avl_tree() {
     stress_sequential::<String, AVLTree<_, _>>(100_000);
+}
+
+
+#[test]
+fn bench_large_tree() {
+    let iter = 1_000_000;
+
+    let mut rng = thread_rng();
+
+    let mut avl: AVLTree<u64, u64> = AVLTree::new();
+    let mut reference: BTreeMap<u64, u64> = BTreeMap::new();
+
+    let start = Instant::now();
+    for _ in 0..iter {
+        let key = rng.gen_range(0..(iter * 2));
+        let _ = avl.insert(&key, key);
+    }
+    println!("AVL {} Insert: {} ms", iter, start.elapsed().as_millis());
+
+    let start = Instant::now();
+    for _ in 0..iter {
+        let key = rng.gen_range(0..(iter * 2));
+        let _ = reference.insert(key, key);
+    }
+    println!("std::BTreemap {} Insert: {} ms", iter, start.elapsed().as_millis());
+
+    let start = Instant::now();
+    for _ in 0..iter {
+        let key = rng.gen_range(0..(iter * 2));
+        let _ = avl.lookup(&key);
+    }
+    println!("AVL {} Lookup(50% success): {} ms", iter, start.elapsed().as_millis());
+
+    let start = Instant::now();
+    for _ in 0..iter {
+        let key = rng.gen_range(0..(iter * 2));
+        let _ = reference.get(&key);
+    }
+    println!("std::BTreemap {} Lookup(50% success): {} ms", iter, start.elapsed().as_millis());
+
+    let start = Instant::now();
+    for _ in 0..iter {
+        let key = rng.gen_range(0..(iter * 2));
+        let _ = avl.remove(&key);
+    }
+    println!("AVL {} Remove(50% success): {} ms", iter, start.elapsed().as_millis());
+
+    let start = Instant::now();
+    for _ in 0..iter {
+        let key = rng.gen_range(0..(iter * 2));
+        let _ = reference.remove(&key);
+    }
+    println!("std::BTreemap {} Remove(50% success): {} ms", iter, start.elapsed().as_millis());
 }
