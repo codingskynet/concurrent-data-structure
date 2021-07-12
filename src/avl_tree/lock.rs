@@ -1,6 +1,8 @@
 use crossbeam_epoch::Atomic;
 use crossbeam_epoch::Guard;
+use crossbeam_epoch::Shared;
 use crossbeam_utils::sync::ShardedLock;
+use crossbeam_utils::sync::ShardedLockReadGuard;
 
 use crate::map::ConcurrentMap;
 
@@ -10,6 +12,8 @@ pub struct LockAVLTree<K, V> {
 
 struct Node<K, V> {
     key: K,
+    
+    /// rwlock for shared mutable area
     inner: ShardedLock<NodeInner<K, V>>,
 }
 
@@ -27,8 +31,9 @@ enum Dir {
 }
 
 struct Cursor<'g, K, V> {
-    // ancestors: Vec<(NonNull<Node<K, V>>, Dir)>, // how to deal rwlock guard?
-    // current: NonNull<Node<K, V>>, // how to deal rwlock guard?
+    ancestors: Vec<(Shared<'g, Node<K, V>>, Dir)>,
+    current: Shared<'g, Node<K, V>>,
+    guard: ShardedLockReadGuard<'g, NodeInner<K, V>>,
     dir: Dir,
 }
 
