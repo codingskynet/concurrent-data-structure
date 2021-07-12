@@ -6,7 +6,7 @@ use crossbeam_utils::sync::ShardedLockReadGuard;
 
 use crate::map::ConcurrentMap;
 
-pub struct LockAVLTree<K, V> {
+pub struct RwLockAVLTree<K, V> {
     root: Atomic<Node<K, V>>,
 }
 
@@ -33,11 +33,13 @@ enum Dir {
 struct Cursor<'g, K, V> {
     ancestors: Vec<(Shared<'g, Node<K, V>>, Dir)>,
     current: Shared<'g, Node<K, V>>,
+    /// the read lock for current node
+    /// It keeps current node and is for hand over hand locking.
     guard: ShardedLockReadGuard<'g, NodeInner<K, V>>,
     dir: Dir,
 }
 
-impl<K, V> ConcurrentMap<K, V> for LockAVLTree<K, V>
+impl<K, V> ConcurrentMap<K, V> for RwLockAVLTree<K, V>
 where
     K: Ord + Clone,
 {
