@@ -2,4 +2,4 @@ mod util;
 mod stack;
 mod queue;
 mod linkedlist;
-mod tree;
+mod avl_tree;

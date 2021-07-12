@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, time::Instant};
 
 use crate::util::map::stress_sequential;
-use cds::{map::SequentialMap, tree::avl_tree::AVLTree};
+use cds::{map::SequentialMap, avl_tree::AVLTree};
 use rand::{Rng, thread_rng};
 
 #[test]

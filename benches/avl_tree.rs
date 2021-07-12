@@ -2,7 +2,7 @@ mod util;
 
 use crate::util::map::bench_sequential;
 use crate::util::map::bench_sequential_reference;
-use cds::tree::avl_tree::AVLTree;
+use cds::avl_tree::AVLTree;
 use criterion::{Criterion, criterion_group, criterion_main};
 
 fn bench_avl_tree(c: &mut Criterion) {

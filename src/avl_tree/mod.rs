@@ -1,3 +1,5 @@
+pub mod lock;
+
 use crate::map::SequentialMap;
 use std::{
     cmp::max,
