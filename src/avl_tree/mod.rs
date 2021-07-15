@@ -1,13 +1,7 @@
 pub mod lock;
 
 use crate::map::SequentialMap;
-use std::{
-    cmp::max,
-    fmt::Debug,
-    mem,
-    ops::DerefMut,
-    ptr::{drop_in_place, NonNull},
-};
+use std::{cmp::max, fmt::Debug, mem, ops::DerefMut, ptr::{drop_in_place, NonNull}, usize};
 
 // how to show the structure of node
 // use: unsafe { println!("Show tree info:\n{:?}", self.root.as_ref()) };
@@ -26,7 +20,7 @@ enum Dir {
 struct Node<K, V> {
     key: K,
     value: V,
-    height: usize,
+    height: isize,
     left: Option<Box<Node<K, V>>>,
     right: Option<Box<Node<K, V>>>,
 }
@@ -92,11 +86,7 @@ impl<K, V> Node<K, V> {
             0
         };
 
-        if left_height > right_height {
-            (left_height - right_height) as isize
-        } else {
-            -((right_height - left_height) as isize)
-        }
+        left_height - right_height
     }
 
     /// rotate left the node
@@ -306,7 +296,7 @@ where
 
     /// get the height of the tree
     pub fn get_height(&self) -> usize {
-        unsafe { self.root.as_ref().right.as_ref().unwrap().height }
+        unsafe { self.root.as_ref().right.as_ref().unwrap().height as usize }
     }
 }
 

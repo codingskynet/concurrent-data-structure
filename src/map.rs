@@ -35,7 +35,7 @@ pub trait ConcurrentMap<K: Ord + Clone, V> {
     ///
     /// If success, return the reference of the value.
     /// If fail, return None.
-    fn lookup(&self, key: &K, guard: &Guard) -> Option<&V>;
+    fn lookup(&self, key: &K, guard: &Guard) -> Option<V>;
 
     /// Remove (key, value) from the map with the key.
     ///
