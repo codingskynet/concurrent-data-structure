@@ -1,11 +1,28 @@
+use cds::map::ConcurrentMap;
 use cds::map::SequentialMap;
 use cds::util::random::Random;
+use crossbeam_epoch::pin;
+use crossbeam_utils::thread;
 use rand::prelude::SliceRandom;
 use rand::prelude::ThreadRng;
 use rand::thread_rng;
 use rand::Rng;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
+use std::time::Instant;
+
+#[derive(Clone)]
+enum Operation {
+    Insert,
+    Lookup,
+    Remove,
+}
+
+#[derive(PartialEq)]
+enum OperationType {
+    Some, // the operation for existing key on the map
+    None, // the operation for not existing key on the map
+}
 
 pub fn stress_sequential<K, M>(iter: u64)
 where
@@ -22,20 +39,7 @@ where
         key
     };
 
-    enum Operation {
-        Insert,
-        Lookup,
-        Remove,
-    }
-
-    #[derive(PartialEq)]
-    enum OperationType {
-        Some, // the operation for existing key on the map
-        None, // the operation for not existing key on the map
-    }
-
     let ops = [Operation::Insert, Operation::Lookup, Operation::Remove];
-
     let types = [OperationType::Some, OperationType::None];
 
     let mut map = M::new();
@@ -120,4 +124,86 @@ where
             }
         }
     }
+}
+
+struct Log<K, V> {
+    start: Instant,
+    end: Instant,
+    op: Operation,
+    key: K,
+    // insert: Try inserting (K, V). If success, Ok(V)
+    // lookup: Try looking up (K, ). If existing (K, V), Ok(V)
+    // remove: Try removing (K, ). If success to remove (K, V), Ok(V)
+    result: Result<V, ()>,
+}
+
+pub fn stress_concurrent<K, M>(iter: u64, thread_num: u64)
+where
+    K: Send + Ord + Clone + Random + Debug,
+    M: Sync + ConcurrentMap<K, u64>,
+{
+    let ops = [Operation::Insert, Operation::Lookup, Operation::Remove];
+
+    let map = M::new();
+
+    let logs = thread::scope(|s| {
+        (0..thread_num)
+            .map(|_| {
+                s.spawn(|_| {
+                    let pin = pin();
+                    let mut rng = thread_rng();
+                    let mut logs = Vec::new();
+
+                    for _ in 0..iter {
+                        let key = K::gen(&mut rng);
+                        let op = ops.choose(&mut rng).unwrap().clone();
+
+                        let (start, result, end) = match op {
+                            Operation::Insert => {
+                                let value = u64::gen(&mut rng);
+                                let start = Instant::now();
+                                let result = match map.insert(&key, value, &pin) {
+                                    Ok(()) => Ok(value),
+                                    Err(_) => Err(()),
+                                };
+                                let end = Instant::now();
+
+                                (start, result, end)
+                            }
+                            Operation::Lookup => {
+                                let start = Instant::now();
+                                let result = match map.lookup(&key, &pin) {
+                                    Some(value) => Ok(value),
+                                    None => Err(()),
+                                };
+                                let end = Instant::now();
+
+                                (start, result, end)
+                            }
+                            Operation::Remove => {
+                                let start = Instant::now();
+                                let result = map.remove(&key, &pin);
+                                let end = Instant::now();
+
+                                (start, result, end)
+                            }
+                        };
+
+                        logs.push(Log {
+                            start,
+                            end,
+                            op,
+                            key,
+                            result,
+                        });
+                    }
+
+                    logs
+                })
+            })
+            .map(|t| t.join().unwrap())
+            .flatten()
+            .collect::<Vec<_>>()
+    })
+    .unwrap();
 }
