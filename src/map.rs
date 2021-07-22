@@ -1,6 +1,6 @@
 use crossbeam_epoch::Guard;
 
-pub trait SequentialMap<K: Ord + Clone, V> {
+pub trait SequentialMap<K: Eq, V> {
     fn new() -> Self;
 
     /// Insert (key, vaule) into the map.
@@ -22,7 +22,7 @@ pub trait SequentialMap<K: Ord + Clone, V> {
     fn remove(&mut self, key: &K) -> Result<V, ()>;
 }
 
-pub trait ConcurrentMap<K: Ord + Clone, V> {
+pub trait ConcurrentMap<K: Eq, V> {
     fn new() -> Self;
 
     /// Insert (key, vaule) into the map.

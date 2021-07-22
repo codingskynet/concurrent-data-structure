@@ -31,7 +31,7 @@ impl<K: Eq, V> Node<K, V> {
     }
 }
 
-impl<K: Default + Ord + Clone, V: Default> SequentialMap<K, V> for LinkedList<K, V> {
+impl<K: Default + Eq + Clone, V: Default> SequentialMap<K, V> for LinkedList<K, V> {
     fn new() -> LinkedList<K, V> {
         LinkedList {
             head: Node::default(),

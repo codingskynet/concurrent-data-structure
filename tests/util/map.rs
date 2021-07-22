@@ -9,6 +9,7 @@ use rand::thread_rng;
 use rand::Rng;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::time::Instant;
 
 #[derive(Clone)]
@@ -124,6 +125,58 @@ where
             }
         }
     }
+}
+
+struct Sequentialized<K, V, M>
+where
+    K: Eq,
+    M: ConcurrentMap<K, V>,
+{
+    inner: M,
+    temp: *const Box<Option<V>>,
+    _marker: PhantomData<(*const K, V)>,
+}
+
+impl<K, V, M> SequentialMap<K, V> for Sequentialized<K, V, M>
+where
+    K: Eq,
+    M: ConcurrentMap<K, V>,
+{
+    fn new() -> Self {
+        let mut empty: Box<Option<V>> = Box::new(None);
+
+        Self {
+            inner: M::new(),
+            temp: &mut empty as *const Box<Option<V>>,
+            _marker: PhantomData,
+        }
+    }
+
+    fn insert(&mut self, key: &K, value: V) -> Result<(), V> {
+        self.inner.insert(key, value, &pin())
+    }
+
+    fn lookup(&self, key: &K) -> Option<&V> {
+        let value = self.inner.lookup(key, &pin());
+
+        // HACK: temporarily save the value, and get its reference safely
+        unsafe {
+            *(self.temp as *mut Box<Option<V>>) = Box::new(value);
+            (**self.temp).as_ref()
+        }
+    }
+
+    fn remove(&mut self, key: &K) -> Result<V, ()> {
+        self.inner.remove(key, &pin())
+    }
+}
+
+pub fn stress_concurrent_as_sequential<K, M>(iter: u64)
+where
+    K: Ord + Clone + Random + Debug,
+    M: ConcurrentMap<K, u64>,
+{
+    stress_sequential::<K, Sequentialized<K, u64, M>>(iter)
 }
 
 struct Log<K, V> {
