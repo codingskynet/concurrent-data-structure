@@ -108,12 +108,10 @@ impl<'g, K: Debug, V> Cursor<'g, K, V> {
         };
 
         let next_node = unsafe { next.as_ref().unwrap() };
-        let next_guard = unsafe {
-            next_node
-                .inner
-                .read()
-                .expect(&format!("Failed to load {:?} read lock", next_node.key))
-        };
+        let next_guard = next_node
+            .inner
+            .read()
+            .expect(&format!("Failed to load {:?} read lock", next_node.key));
 
         let parent = mem::replace(&mut self.current, next);
         self.ancestors.push((parent, self.dir));
@@ -200,7 +198,7 @@ where
         loop {
             let cursor = self.find(key, guard);
 
-            if cursor.dir == Dir::Eq {
+            if cursor.dir == Dir::Eq && cursor.inner_guard.value.is_some() {
                 let node_inner = node
                     .inner
                     .into_inner()
@@ -213,7 +211,7 @@ where
             // unlock read lock and lock write lock... very inefficient, need upgrade from read lock to write lock
             let read_guard = cursor.inner_guard;
             drop(read_guard);
-            let write_guard = current
+            let mut write_guard = current
                 .inner
                 .write()
                 .expect(&format!("Failed to load {:?} write lock", current.key));
@@ -244,7 +242,19 @@ where
 
                         write_guard.right.store(Owned::new(node), Ordering::Relaxed)
                     }
-                    _ => unreachable!(),
+                    Dir::Eq => {
+                        let value = node
+                                .inner
+                                .into_inner()
+                                .expect("Failed to get data from node")
+                                .value.unwrap();
+
+                        if write_guard.value.is_some() {
+                            return Err(value);
+                        }
+
+                        write_guard.value = Some(value);
+                    }
                 }
             }
 
@@ -268,6 +278,28 @@ where
     }
 
     fn remove(&self, key: &K, guard: &Guard) -> Result<V, ()> {
-        todo!()
+        let cursor = self.find(key, guard);
+
+        if cursor.dir != Dir::Eq {
+            return Err(());
+        }
+
+        let current = unsafe { cursor.current.as_ref().unwrap() };
+
+        // unlock read lock and lock write lock... very inefficient, need upgrade from read lock to write lock
+        let read_guard = cursor.inner_guard;
+        drop(read_guard);
+        let mut write_guard = current
+            .inner
+            .write()
+            .expect(&format!("Failed to load {:?} write lock", current.key));
+
+        if write_guard.value.is_none() {
+            return Err(());
+        }
+
+        let value = write_guard.value.take().unwrap();
+
+        Ok(value)
     }
 }

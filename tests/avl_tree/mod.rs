@@ -1,3 +1,5 @@
+mod lock;
+
 use std::{collections::BTreeMap, time::Instant};
 
 use crate::util::map::stress_sequential;

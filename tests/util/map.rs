@@ -133,7 +133,7 @@ where
     M: ConcurrentMap<K, V>,
 {
     inner: M,
-    temp: *const Box<Option<V>>,
+    temp: *const Option<V>,
     _marker: PhantomData<(*const K, V)>,
 }
 
@@ -143,11 +143,11 @@ where
     M: ConcurrentMap<K, V>,
 {
     fn new() -> Self {
-        let mut empty: Box<Option<V>> = Box::new(None);
+        let empty: Box<Option<V>> = Box::new(None);
 
         Self {
             inner: M::new(),
-            temp: &mut empty as *const Box<Option<V>>,
+            temp: Box::leak(empty) as *const Option<V>,
             _marker: PhantomData,
         }
     }
@@ -161,8 +161,8 @@ where
 
         // HACK: temporarily save the value, and get its reference safely
         unsafe {
-            *(self.temp as *mut Box<Option<V>>) = Box::new(value);
-            (**self.temp).as_ref()
+            *(self.temp as *mut Option<V>) = value;
+            (*self.temp).as_ref()
         }
     }
 
