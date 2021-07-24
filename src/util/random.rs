@@ -23,3 +23,15 @@ impl Random for u64 {
         rng.gen()
     }
 }
+
+impl Random for u16 {
+    fn gen(rng: &mut ThreadRng) -> Self {
+        rng.gen()
+    }
+}
+
+impl Random for u8 {
+    fn gen(rng: &mut ThreadRng) -> Self {
+        rng.gen()
+    }
+}

@@ -30,14 +30,19 @@ where
     K: Ord + Clone + Random + Debug,
     M: SequentialMap<K, u64>,
 {
+    // 10 times try to get not existing key, or return if failing
     let gen_not_existing_key = |rng: &mut ThreadRng, map: &BTreeMap<K, u64>| {
         let mut key = K::gen(rng);
 
-        while map.contains_key(&key) {
+        for _ in 0..10 {
+            if !map.contains_key(&key) {
+                return Ok(key);
+            }
+
             key = K::gen(rng);
         }
 
-        key
+        Err(())
     };
 
     let ops = [Operation::Insert, Operation::Lookup, Operation::Remove];
@@ -54,7 +59,11 @@ where
 
         if existing_key.is_none() || *t == OperationType::None {
             // run operation with not existing key
-            let not_existing_key = gen_not_existing_key(&mut rng, &ref_map);
+            let not_existing_key = if let Ok(key) = gen_not_existing_key(&mut rng, &ref_map) {
+                key
+            } else {
+                continue;
+            };
 
             match ops.choose(&mut rng).unwrap() {
                 Operation::Insert => {
@@ -200,63 +209,80 @@ where
     let map = M::new();
 
     let logs = thread::scope(|s| {
-        (0..thread_num)
-            .map(|_| {
-                s.spawn(|_| {
-                    let pin = pin();
-                    let mut rng = thread_rng();
-                    let mut logs = Vec::new();
+        let mut threads = Vec::new();
 
-                    for _ in 0..iter {
-                        let key = K::gen(&mut rng);
-                        let op = ops.choose(&mut rng).unwrap().clone();
+        for _ in 0..thread_num {
+            let t = s.spawn(|_| {
+                let pin = pin();
+                let mut rng = thread_rng();
+                let mut logs = Vec::new();
 
-                        let (start, result, end) = match op {
-                            Operation::Insert => {
-                                let value = u64::gen(&mut rng);
-                                let start = Instant::now();
-                                let result = match map.insert(&key, value, &pin) {
-                                    Ok(()) => Ok(value),
-                                    Err(_) => Err(()),
-                                };
-                                let end = Instant::now();
+                for i in 0..iter {
+                    let key = K::gen(&mut rng);
+                    let op = ops.choose(&mut rng).unwrap().clone();
 
-                                (start, result, end)
-                            }
-                            Operation::Lookup => {
-                                let start = Instant::now();
-                                let result = match map.lookup(&key, &pin) {
-                                    Some(value) => Ok(value),
-                                    None => Err(()),
-                                };
-                                let end = Instant::now();
+                    let (start, result, end) = match op {
+                        Operation::Insert => {
+                            let value = u64::gen(&mut rng);
+                            let start = Instant::now();
+                            let result = match map.insert(&key, value, &pin) {
+                                Ok(()) => Ok(value),
+                                Err(_) => Err(()),
+                            };
+                            let end = Instant::now();
 
-                                (start, result, end)
-                            }
-                            Operation::Remove => {
-                                let start = Instant::now();
-                                let result = map.remove(&key, &pin);
-                                let end = Instant::now();
+                            (start, result, end)
+                        }
+                        Operation::Lookup => {
+                            let start = Instant::now();
+                            let result = match map.lookup(&key, &pin) {
+                                Some(value) => Ok(value),
+                                None => Err(()),
+                            };
+                            let end = Instant::now();
 
-                                (start, result, end)
-                            }
-                        };
+                            (start, result, end)
+                        }
+                        Operation::Remove => {
+                            let start = Instant::now();
+                            let result = map.remove(&key, &pin);
+                            let end = Instant::now();
 
-                        logs.push(Log {
-                            start,
-                            end,
-                            op,
-                            key,
-                            result,
-                        });
-                    }
+                            (start, result, end)
+                        }
+                    };
 
-                    logs
-                })
-            })
-            .map(|t| t.join().unwrap())
+                    logs.push(Log {
+                        start,
+                        end,
+                        op,
+                        key,
+                        result,
+                    });
+                }
+
+                logs
+            });
+
+            threads.push(t);
+        }
+
+        threads
+            .into_iter()
+            .map(|h| h.join().unwrap())
             .flatten()
             .collect::<Vec<_>>()
     })
     .unwrap();
+
+    assert_logs(logs);
+}
+
+fn assert_logs<K: Ord>(logs: Vec<Log<K, u64>>) {
+    // let mut insert = Vec::new();
+    // let mut remove = Vec::new();
+
+    // for log in logs {
+
+    // }
 }
