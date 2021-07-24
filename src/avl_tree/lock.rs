@@ -29,6 +29,24 @@ struct NodeInner<K, V> {
     right: Atomic<Node<K, V>>,
 }
 
+impl<K, V> NodeInner<K, V> {
+    fn get_child(&self, dir: Dir) -> &Atomic<Node<K, V>> {
+        match dir {
+            Dir::Left => &self.left,
+            Dir::Right => &self.right,
+            Dir::Eq => unreachable!(),
+        }
+    }
+
+    fn get_child_mut(&mut self, dir: Dir) -> &mut Atomic<Node<K, V>> {
+        match dir {
+            Dir::Left => &mut self.left,
+            Dir::Right => &mut self.right,
+            Dir::Eq => unreachable!(),
+        }
+    }
+}
+
 impl<K: Default, V: Default> Default for Node<K, V> {
     fn default() -> Self {
         Self::new(K::default(), V::default())
@@ -65,7 +83,10 @@ struct Cursor<'g, K, V> {
     dir: Dir,
 }
 
-impl<'g, K: Debug, V> Cursor<'g, K, V> {
+impl<'g, K, V> Cursor<'g, K, V>
+where
+    K: Debug,
+{
     fn new(tree: &RwLockAVLTree<K, V>, guard: &'g Guard) -> Cursor<'g, K, V> {
         let root = tree.root.load(Ordering::Relaxed, guard);
         let inner_guard = unsafe {
@@ -118,6 +139,87 @@ impl<'g, K: Debug, V> Cursor<'g, K, V> {
 
         // replace with current's read guard, then unlock parent read guard by dropping after scope
         let _ = mem::replace(&mut self.inner_guard, next_guard);
+    }
+
+    /// cleanup moving to ancestor
+    ///
+    /// If the node does not have full childs, delete it and move child to its position.
+    fn cleanup(mut self, guard: &'g Guard) {
+        while let Some((parent, dir)) = self.ancestors.pop() {
+            let parent_ref = unsafe { parent.as_ref().unwrap() };
+
+            let current = self.current;
+            let current_ref = unsafe { current.as_ref().unwrap() };
+            let read_guard = self.inner_guard;
+
+            // only already logically removed node can be cleaned up
+            if read_guard.value.is_none() {
+                let (left, right) = (
+                    read_guard.left.load(Ordering::Relaxed, guard).is_null(),
+                    read_guard.right.load(Ordering::Relaxed, guard).is_null(),
+                );
+
+                // if the node has one or zero node, the node can be directly removed
+                if left || right {
+                    drop(read_guard);
+
+                    let parent_write_guard = parent_ref
+                        .inner
+                        .write()
+                        .expect(&format!("Faild to load {:?} write lock", parent_ref.key));
+
+                    // check if current's parent is even parent now
+                    if parent_write_guard
+                        .get_child(dir)
+                        .load(Ordering::Relaxed, guard)
+                        == self.current
+                    {
+                        let write_guard = current_ref
+                            .inner
+                            .write()
+                            .expect(&format!("Faild to load {:?} write lock", current_ref.key));
+
+                        let (left, right) = (
+                            write_guard.left.load(Ordering::Relaxed, guard),
+                            write_guard.right.load(Ordering::Relaxed, guard),
+                        );
+
+                        // re-check if it can be removed
+                        if write_guard.value.is_none() && (left.is_null() || right.is_null()) {
+                            let replace_node = if !left.is_null() {
+                                write_guard
+                                    .left
+                                    .swap(Shared::null(), Ordering::Relaxed, guard)
+                            } else {
+                                write_guard
+                                    .right
+                                    .swap(Shared::null(), Ordering::Relaxed, guard)
+                            };
+
+                            let _ = parent_write_guard.get_child(dir).swap(
+                                replace_node,
+                                Ordering::Relaxed,
+                                guard,
+                            );
+
+                            // drop(write_guard);
+                            // drop(parent_write_guard);
+
+                            // request deallocate removed node
+                            unsafe {
+                                guard.defer_destroy(current);
+                            }
+                        }
+                    }
+                }
+            }
+
+            self.current = parent;
+            self.inner_guard = parent_ref
+                .inner
+                .read()
+                .expect(&format!("Failed to load {:?} read lock", parent_ref.key));
+        }
     }
 }
 
@@ -244,10 +346,11 @@ where
                     }
                     Dir::Eq => {
                         let value = node
-                                .inner
-                                .into_inner()
-                                .expect("Failed to get data from node")
-                                .value.unwrap();
+                            .inner
+                            .into_inner()
+                            .expect("Failed to get data from node")
+                            .value
+                            .unwrap();
 
                         if write_guard.value.is_some() {
                             return Err(value);
@@ -278,7 +381,7 @@ where
     }
 
     fn remove(&self, key: &K, guard: &Guard) -> Result<V, ()> {
-        let cursor = self.find(key, guard);
+        let mut cursor = self.find(key, guard);
 
         if cursor.dir != Dir::Eq {
             return Err(());
@@ -299,6 +402,13 @@ where
         }
 
         let value = write_guard.value.take().unwrap();
+        drop(write_guard);
+
+        cursor.inner_guard = current
+            .inner
+            .read()
+            .expect(&format!("Failed to load {:?} read lock", current.key));
+        cursor.cleanup(guard);
 
         Ok(value)
     }

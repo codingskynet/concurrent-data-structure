@@ -23,10 +23,10 @@ fn test_rwlock_avl_tree_insert_lookup() {
 
 #[test]
 fn stress_rwlock_avl_tree_sequential() {
-    stress_concurrent_as_sequential::<String, RwLockAVLTree<_, _>>(1_000_000);
+    stress_concurrent_as_sequential::<u8, RwLockAVLTree<_, _>>(1_000_000);
 }
 
 #[test]
 fn stress_rwlock_avl_tree_concurrent() {
-    stress_concurrent::<String, RwLockAVLTree<_, _>>(100_000, 10);
+    stress_concurrent::<u8, RwLockAVLTree<_, _>>(10_000, 10);
 }

@@ -8,11 +8,13 @@ use rand::prelude::ThreadRng;
 use rand::thread_rng;
 use rand::Rng;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fmt::Debug;
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::time::Instant;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum Operation {
     Insert,
     Lookup,
@@ -188,6 +190,7 @@ where
     stress_sequential::<K, Sequentialized<K, u64, M>>(iter)
 }
 
+#[derive(Debug)]
 struct Log<K, V> {
     start: Instant,
     end: Instant,
@@ -201,7 +204,7 @@ struct Log<K, V> {
 
 pub fn stress_concurrent<K, M>(iter: u64, thread_num: u64)
 where
-    K: Send + Ord + Clone + Random + Debug,
+    K: Send + Ord + Clone + Random + Debug + Hash,
     M: Sync + ConcurrentMap<K, u64>,
 {
     let ops = [Operation::Insert, Operation::Lookup, Operation::Remove];
@@ -252,13 +255,17 @@ where
                         }
                     };
 
-                    logs.push(Log {
+                    let log = Log {
                         start,
                         end,
                         op,
                         key,
                         result,
-                    });
+                    };
+
+                    println!("{:?} [{:0>10}] {:?}", std::thread::current().id(), i, log);
+
+                    logs.push(log);
                 }
 
                 logs
@@ -278,11 +285,18 @@ where
     assert_logs(logs);
 }
 
-fn assert_logs<K: Ord>(logs: Vec<Log<K, u64>>) {
-    // let mut insert = Vec::new();
-    // let mut remove = Vec::new();
+fn assert_logs<K: Ord + Hash + Clone>(logs: Vec<Log<K, u64>>) {
+    let mut key_logs = HashMap::new();
 
-    // for log in logs {
+    // classify logs by key
+    for log in logs {
+        key_logs
+            .entry(log.key.clone())
+            .or_insert_with(|| Vec::new())
+            .push(log);
+    }
 
-    // }
+    for (key, logs) in key_logs {
+
+    }
 }
