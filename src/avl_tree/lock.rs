@@ -6,6 +6,7 @@ use crossbeam_utils::sync::ShardedLock;
 use crossbeam_utils::sync::ShardedLockReadGuard;
 use std::fmt::Debug;
 use std::mem;
+use std::mem::ManuallyDrop;
 use std::sync::atomic::Ordering;
 
 use crate::map::ConcurrentMap;
@@ -79,7 +80,7 @@ struct Cursor<'g, K, V> {
     current: Shared<'g, Node<K, V>>,
     /// the read lock for current node's inner
     /// It keeps current node's inner and is for hand-over-hand locking.
-    inner_guard: ShardedLockReadGuard<'g, NodeInner<K, V>>,
+    inner_guard: ManuallyDrop<ShardedLockReadGuard<'g, NodeInner<K, V>>>,
     dir: Dir,
 }
 
@@ -100,7 +101,7 @@ where
         let cursor = Cursor {
             ancestors: vec![],
             current: root,
-            inner_guard,
+            inner_guard: ManuallyDrop::new(inner_guard),
             dir: Dir::Right,
         };
 
@@ -137,20 +138,27 @@ where
         let parent = mem::replace(&mut self.current, next);
         self.ancestors.push((parent, self.dir));
 
-        // replace with current's read guard, then unlock parent read guard by dropping after scope
-        let _ = mem::replace(&mut self.inner_guard, next_guard);
+        // replace with current's read guard, then unlock parent read guard by dropping
+        let mut parent_guard = mem::replace(&mut self.inner_guard, ManuallyDrop::new(next_guard));
+
+        unsafe {
+            ManuallyDrop::drop(&mut parent_guard);
+        }
     }
 
     /// cleanup moving to ancestor
     ///
     /// If the node does not have full childs, delete it and move child to its position.
-    fn cleanup(mut self, guard: &'g Guard) {
-        while let Some((parent, dir)) = self.ancestors.pop() {
+    fn cleanup(mut cursor: Cursor<'g, K, V>, guard: &'g Guard) {
+        while let Some((parent, dir)) = cursor.ancestors.pop() {
             let parent_ref = unsafe { parent.as_ref().unwrap() };
 
-            let current = self.current;
+            let current = cursor.current;
             let current_ref = unsafe { current.as_ref().unwrap() };
-            let read_guard = self.inner_guard;
+            let read_guard = current_ref
+                .inner
+                .read()
+                .expect(&format!("Faild to load {:?} read lock", current_ref.key));
 
             // only already logically removed node can be cleaned up
             if read_guard.value.is_none() {
@@ -172,7 +180,7 @@ where
                     if parent_write_guard
                         .get_child(dir)
                         .load(Ordering::Relaxed, guard)
-                        == self.current
+                        == current
                     {
                         let write_guard = current_ref
                             .inner
@@ -202,6 +210,9 @@ where
                                 guard,
                             );
 
+                            drop(parent_write_guard);
+                            drop(write_guard);
+
                             // drop(write_guard);
                             // drop(parent_write_guard);
 
@@ -214,11 +225,7 @@ where
                 }
             }
 
-            self.current = parent;
-            self.inner_guard = parent_ref
-                .inner
-                .read()
-                .expect(&format!("Failed to load {:?} read lock", parent_ref.key));
+            cursor.current = parent;
         }
     }
 }
@@ -298,9 +305,13 @@ where
 
         // TODO: it can be optimized by re-search nearby ancestors
         loop {
-            let cursor = self.find(key, guard);
+            let mut cursor = self.find(key, guard);
 
             if cursor.dir == Dir::Eq && cursor.inner_guard.value.is_some() {
+                unsafe {
+                    ManuallyDrop::drop(&mut cursor.inner_guard);
+                }
+
                 let node_inner = node
                     .inner
                     .into_inner()
@@ -311,8 +322,9 @@ where
             let current = unsafe { cursor.current.as_ref().unwrap() };
 
             // unlock read lock and lock write lock... very inefficient, need upgrade from read lock to write lock
-            let read_guard = cursor.inner_guard;
-            drop(read_guard);
+            unsafe {
+                ManuallyDrop::drop(&mut cursor.inner_guard);
+            }
             let mut write_guard = current
                 .inner
                 .write()
@@ -371,11 +383,13 @@ where
     }
 
     fn lookup(&self, key: &K, guard: &Guard) -> Option<V> {
-        let cursor = self.find(key, guard);
+        let mut cursor = self.find(key, guard);
 
         if cursor.dir == Dir::Eq {
-            return cursor.inner_guard.value.clone();
+            let inner_guard = ManuallyDrop::into_inner(cursor.inner_guard);
+            return inner_guard.value.clone();
         } else {
+            unsafe { ManuallyDrop::drop(&mut cursor.inner_guard) };
             return None;
         }
     }
@@ -383,15 +397,14 @@ where
     fn remove(&self, key: &K, guard: &Guard) -> Result<V, ()> {
         let mut cursor = self.find(key, guard);
 
+        let current = unsafe { cursor.current.as_ref().unwrap() };
+        unsafe { ManuallyDrop::drop(&mut cursor.inner_guard) };
+
         if cursor.dir != Dir::Eq {
             return Err(());
         }
 
-        let current = unsafe { cursor.current.as_ref().unwrap() };
-
         // unlock read lock and lock write lock... very inefficient, need upgrade from read lock to write lock
-        let read_guard = cursor.inner_guard;
-        drop(read_guard);
         let mut write_guard = current
             .inner
             .write()
@@ -404,11 +417,7 @@ where
         let value = write_guard.value.take().unwrap();
         drop(write_guard);
 
-        cursor.inner_guard = current
-            .inner
-            .read()
-            .expect(&format!("Failed to load {:?} read lock", current.key));
-        cursor.cleanup(guard);
+        Cursor::cleanup(cursor, guard);
 
         Ok(value)
     }
