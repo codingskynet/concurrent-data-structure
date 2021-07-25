@@ -14,7 +14,7 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::time::Instant;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 enum Operation {
     Insert,
     Lookup,
@@ -190,7 +190,7 @@ where
     stress_sequential::<K, Sequentialized<K, u64, M>>(iter)
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Log<K, V> {
     start: Instant,
     end: Instant,
@@ -200,6 +200,12 @@ struct Log<K, V> {
     // lookup: Try looking up (K, ). If existing (K, V), Ok(V)
     // remove: Try removing (K, ). If success to remove (K, V), Ok(V)
     result: Result<V, ()>,
+}
+
+fn print_logs<K: Debug>(logs: &Vec<Log<K, u64>>) {
+    for log in logs {
+        println!("{:?}", log);
+    }
 }
 
 pub fn stress_concurrent<K, M>(iter: u64, thread_num: u64)
@@ -299,96 +305,166 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
     }
 
     for (key, mut logs) in key_logs {
-        println!("{:?}:", key);
+        println!("{:?} logs: {}", key, logs.len());
 
         logs.sort_by(|a, b| a.start.cmp(&b.start));
 
-        let mut correct_logs = Vec::new();
-
         let mut state: Option<u64> = None;
-        for log in logs {
-            match log.op {
-                Operation::Insert => {
-                    if let Some(s) = state {
-                        if let Ok(v) = log.result {
-                            // try to find near op
-                            println!("State: {:?}, Fix: {:?}", state, log);
-                        } else {
-                            // ok
+        let mut states = Vec::new();
+        let mut failed_logs = Vec::new();
+
+        let mut idx = 0;
+        loop {
+            if let Ok(new_state) = verify_state_log(state, &logs[idx]) {
+                state = new_state;
+                states.push(new_state);
+
+                // check if the failed logs can be correct
+                loop {
+                    let mut refresh = false;
+
+                    for i in 0..failed_logs.len() {
+                        if let Ok(new_state) = verify_state_log(state, &failed_logs[i]) {
+                            println!("{:?}\n can mutate {:?} to {:?} on {}", &failed_logs[i], state, new_state, idx + 1);
+
+                            idx += 1;
+                            logs.insert(idx, failed_logs.remove(i));
+
+                            state = new_state;
+                            states.push(new_state);
+                            refresh = true;
+                            break;
                         }
-                    } else {
-                        if let Ok(v) = log.result {
-                            // ok
-                            state = Some(v);
-                        } else {
-                            // try to find near op
-                            println!("State: {:?}, Fix: {:?}", state, log);
-                        }
+                    }
+
+                    if !refresh {
+                        break;
                     }
                 }
-                Operation::Lookup => {
-                    if let Some(s) = state {
-                        if let Ok(v) = log.result {
-                            if s == v {
-                                // ok
-                            } else {
-                                // try to find near op
-                                println!("State: {:?}, Fix: {:?}", state, log);
+            } else {
+                let log = logs.remove(idx);
+                println!("{:?}\n should be fixed.", log);
 
-                            }
-                        } else {
-                            // try to find near op
-                            println!("State: {:?}, Fix: {:?}", state, log);
-
-                        }
-                    } else {
-                        if let Ok(v) = log.result {
-                            // try to find near op
-                            println!("State: {:?}, Fix: {:?}", state, log);
-
-                        } else {
-                            // Ok
-                        }
-                    }
+                if (log.op == Operation::Insert || log.op == Operation::Remove) && log.result.is_ok()
+                {
+                    todo!(
+                        "This case is successfully writing, which means it can cause side-effect on backward searching. 
+                        So, moving the log should re-check all calculated states right after the log"
+                    )
                 }
-                Operation::Remove => {
-                    if let Some(s) = state {
-                        if let Ok(v) = log.result {
-                            if s == v {
-                                // ok
-                                state = None;
-                            } else {
-                                // try to find near op
-                                println!("State: {:?}, Fix: {:?}", state, log);
 
-                            }
-                        } else {
-                            // try to find near op
-                            println!("State: {:?}, Fix: {:?}", state, log);
+                // backward searching
+                println!("{} {} {}", logs.len(), states.len(), idx);
 
-                        }
-                    } else {
-                        if let Ok(v) = log.result {
-                            // try to find near op
-                            println!("State: {:?}, Fix: {:?}", state, log);
+                let mut success = false;
+                let mut new_idx = idx - 1;
+                while logs[new_idx].end >= log.start {
+                    if let Ok(new_state) = verify_state_log(states[new_idx], &log) {
+                        assert_eq!(states[new_idx], new_state);
 
-                        } else {
-                            // Ok
-                        }
+                        println!("Insert {:?} next to {:?}", log, logs[new_idx]);
+                        logs.insert(new_idx + 1, log.clone());
+                        states.insert(new_idx + 1, new_state);
+
+                        success = true;
+                        break;
                     }
+
+                    new_idx -= 1;
+                }
+
+                // forward searching by saving failed logs and trying next state
+                if !success {
+                    println!("Failed to fix on backward searching");
+                    failed_logs.push(log);
+                    idx -= 1;
                 }
             }
 
-            correct_logs.push(log);
+            idx += 1;
+
+            if idx >= logs.len() {
+                break;
+            }
         }
+
+        print_logs(&logs);
+        assert_eq!(failed_logs.len(), 0);
+
+        verify_logs(logs);
         return;
     }
 }
 
-fn get_node_state<K>(log: Log<K, u64>) -> Option<u64> {
+// verify if the logs have no contradiction on order
+fn verify_logs<K: Debug>(logs: Vec<Log<K, u64>>) {
+    let mut state: Option<u64> = None;
+    for log in logs {
+        if let Ok(new_state) = verify_state_log(state, &log) {
+            state = new_state;
+        } else {
+            panic!("The log is inconsistent. {:?}", log);
+        }
+    }
+}
+
+// verify if the log is correct to set on right next of the state
+// if correct, return Ok() with next state
+// if not correct, Err(())
+fn verify_state_log<K>(state: Option<u64>, log: &Log<K, u64>) -> Result<Option<u64>, ()> {
     match log.op {
-        Operation::Insert => todo!(),
-        Operation::Lookup => todo!(),
-        Operation::Remove => todo!(),
+        Operation::Insert => {
+            if let Some(_) = state {
+                if let Ok(_) = log.result {
+                    Err(())
+                } else {
+                    Ok(state)
+                }
+            } else {
+                if let Ok(v) = log.result {
+                    Ok(Some(v))
+                } else {
+                    Err(())
+                }
+            }
+        }
+        Operation::Lookup => {
+            if let Some(s) = state {
+                if let Ok(v) = log.result {
+                    if s == v {
+                        Ok(state)
+                    } else {
+                        Err(())
+                    }
+                } else {
+                    Err(())
+                }
+            } else {
+                if let Ok(_) = log.result {
+                    Err(())
+                } else {
+                    Ok(state)
+                }
+            }
+        }
+        Operation::Remove => {
+            if let Some(s) = state {
+                if let Ok(v) = log.result {
+                    if s == v {
+                        Ok(None)
+                    } else {
+                        Err(())
+                    }
+                } else {
+                    Err(())
+                }
+            } else {
+                if let Ok(_) = log.result {
+                    Err(())
+                } else {
+                    Ok(state)
+                }
+            }
+        }
     }
 }
