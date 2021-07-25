@@ -264,7 +264,7 @@ where
                         result,
                     };
 
-                    println!("{:?} [{:0>10}] {:?}", std::thread::current().id(), i, log);
+                    // println!("{:?} [{:0>10}] {:?}", std::thread::current().id(), i, log);
 
                     logs.push(log);
                     drop(pin);
@@ -287,7 +287,7 @@ where
     assert_logs(logs);
 }
 
-fn assert_logs<K: Ord + Hash + Clone>(logs: Vec<Log<K, u64>>) {
+fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
     let mut key_logs = HashMap::new();
 
     // classify logs by key
@@ -298,5 +298,97 @@ fn assert_logs<K: Ord + Hash + Clone>(logs: Vec<Log<K, u64>>) {
             .push(log);
     }
 
-    for (key, logs) in key_logs {}
+    for (key, mut logs) in key_logs {
+        println!("{:?}:", key);
+
+        logs.sort_by(|a, b| a.start.cmp(&b.start));
+
+        let mut correct_logs = Vec::new();
+
+        let mut state: Option<u64> = None;
+        for log in logs {
+            match log.op {
+                Operation::Insert => {
+                    if let Some(s) = state {
+                        if let Ok(v) = log.result {
+                            // try to find near op
+                            println!("State: {:?}, Fix: {:?}", state, log);
+                        } else {
+                            // ok
+                        }
+                    } else {
+                        if let Ok(v) = log.result {
+                            // ok
+                            state = Some(v);
+                        } else {
+                            // try to find near op
+                            println!("State: {:?}, Fix: {:?}", state, log);
+                        }
+                    }
+                }
+                Operation::Lookup => {
+                    if let Some(s) = state {
+                        if let Ok(v) = log.result {
+                            if s == v {
+                                // ok
+                            } else {
+                                // try to find near op
+                                println!("State: {:?}, Fix: {:?}", state, log);
+
+                            }
+                        } else {
+                            // try to find near op
+                            println!("State: {:?}, Fix: {:?}", state, log);
+
+                        }
+                    } else {
+                        if let Ok(v) = log.result {
+                            // try to find near op
+                            println!("State: {:?}, Fix: {:?}", state, log);
+
+                        } else {
+                            // Ok
+                        }
+                    }
+                }
+                Operation::Remove => {
+                    if let Some(s) = state {
+                        if let Ok(v) = log.result {
+                            if s == v {
+                                // ok
+                                state = None;
+                            } else {
+                                // try to find near op
+                                println!("State: {:?}, Fix: {:?}", state, log);
+
+                            }
+                        } else {
+                            // try to find near op
+                            println!("State: {:?}, Fix: {:?}", state, log);
+
+                        }
+                    } else {
+                        if let Ok(v) = log.result {
+                            // try to find near op
+                            println!("State: {:?}, Fix: {:?}", state, log);
+
+                        } else {
+                            // Ok
+                        }
+                    }
+                }
+            }
+
+            correct_logs.push(log);
+        }
+        return;
+    }
+}
+
+fn get_node_state<K>(log: Log<K, u64>) -> Option<u64> {
+    match log.op {
+        Operation::Insert => todo!(),
+        Operation::Lookup => todo!(),
+        Operation::Remove => todo!(),
+    }
 }

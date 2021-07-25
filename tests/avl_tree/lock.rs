@@ -1,8 +1,5 @@
-use std::time::Duration;
-
 use cds::{avl_tree::lock::RwLockAVLTree, map::ConcurrentMap};
 use crossbeam_epoch::pin;
-use rand::{Rng, thread_rng};
 
 use crate::util::map::{stress_concurrent, stress_concurrent_as_sequential};
 
@@ -39,5 +36,5 @@ fn stress_rwlock_avl_tree_sequential() {
 
 #[test]
 fn stress_rwlock_avl_tree_concurrent() {
-    stress_concurrent::<u8, RwLockAVLTree<_, _>>(100_000, 10);
+    stress_concurrent::<u8, RwLockAVLTree<_, _>>(10_000, 10);
 }

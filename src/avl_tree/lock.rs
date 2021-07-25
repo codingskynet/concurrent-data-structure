@@ -1,8 +1,8 @@
+use crossbeam_epoch::pin;
 use crossbeam_epoch::Atomic;
 use crossbeam_epoch::Guard;
 use crossbeam_epoch::Owned;
 use crossbeam_epoch::Shared;
-use crossbeam_epoch::pin;
 use crossbeam_utils::sync::ShardedLock;
 use crossbeam_utils::sync::ShardedLockReadGuard;
 use std::fmt::Debug;
@@ -276,6 +276,28 @@ where
                 .expect("Failed to load root right read lock")
                 .height as usize
         }
+    }
+
+    /// print tree structure
+    pub fn print(&self, guard: &Guard) {
+        fn print<K: Debug, V: Debug>(node: Shared<Node<K, V>>, guard: &Guard) -> String {
+            if node.is_null() {
+                return "null".to_string();
+            }
+
+            let node = unsafe { node.as_ref().unwrap() };
+            let node_inner = node.inner.read().unwrap();
+
+            format!(
+                "{{key: {:?},  value: {:?}, left: {}, right: {}}}",
+                node.key,
+                node_inner.value,
+                print(node_inner.left.load(Ordering::Relaxed, guard), guard),
+                print(node_inner.right.load(Ordering::Relaxed, guard), guard)
+            )
+        }
+
+        println!("{}", print(self.root.load(Ordering::Relaxed, guard), guard));
     }
 }
 
