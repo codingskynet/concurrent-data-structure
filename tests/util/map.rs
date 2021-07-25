@@ -293,6 +293,8 @@ where
     assert_logs(logs);
 }
 
+// bug: if the bunch of operations are moved to near future and it causes inconsistency,
+// this alogorithm cannot rearrange well.
 fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
     let mut key_logs = HashMap::new();
 
@@ -305,13 +307,15 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
     }
 
     for (key, mut logs) in key_logs {
-        println!("{:?} logs: {}", key, logs.len());
+        // println!("{:?} logs: {}", key, logs.len());
 
         logs.sort_by(|a, b| a.start.cmp(&b.start));
 
+        // states: the states log
+        // transition: states[0] -> logs[0] -> states[1] -> logs[1] -> ...
         let mut state: Option<u64> = None;
-        let mut states = Vec::new();
-        let mut failed_logs = Vec::new();
+        let mut states = vec![None];
+        let mut failed_logs: Vec<Log<K, u64>> = Vec::new();
 
         let mut idx = 0;
         loop {
@@ -322,10 +326,17 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
                 // check if the failed logs can be correct
                 loop {
                     let mut refresh = false;
+                    failed_logs.sort_by(|a, b| a.start.cmp(&b.start));
 
                     for i in 0..failed_logs.len() {
                         if let Ok(new_state) = verify_state_log(state, &failed_logs[i]) {
-                            println!("{:?}\n can mutate {:?} to {:?} on {}", &failed_logs[i], state, new_state, idx + 1);
+                            // println!(
+                            //     "{:?}\n can mutate {:?} to {:?} on {}",
+                            //     &failed_logs[i],
+                            //     state,
+                            //     new_state,
+                            //     idx + 1
+                            // );
 
                             idx += 1;
                             logs.insert(idx, failed_logs.remove(i));
@@ -341,69 +352,75 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
                         break;
                     }
                 }
+
+                idx += 1;
             } else {
                 let log = logs.remove(idx);
-                println!("{:?}\n should be fixed.", log);
-
-                if (log.op == Operation::Insert || log.op == Operation::Remove) && log.result.is_ok()
-                {
-                    todo!(
-                        "This case is successfully writing, which means it can cause side-effect on backward searching. 
-                        So, moving the log should re-check all calculated states right after the log"
-                    )
-                }
-
-                // backward searching
-                println!("{} {} {}", logs.len(), states.len(), idx);
+                // println!("{:?}\n should be fixed.", log);
 
                 let mut success = false;
-                let mut new_idx = idx - 1;
-                while logs[new_idx].end >= log.start {
-                    if let Ok(new_state) = verify_state_log(states[new_idx], &log) {
-                        assert_eq!(states[new_idx], new_state);
 
-                        println!("Insert {:?} next to {:?}", log, logs[new_idx]);
-                        logs.insert(new_idx + 1, log.clone());
-                        states.insert(new_idx + 1, new_state);
+                // only immutable log can search backward
+                if !((log.op == Operation::Insert || log.op == Operation::Remove)
+                    && log.result.is_ok()) && idx > 0
+                {
+                    // backward searching
+                    let mut new_idx = idx - 1;
+                    while logs[new_idx].end >= log.start {
+                        if let Ok(new_state) = verify_state_log(states[new_idx], &log) {
+                            assert_eq!(states[new_idx], new_state);
 
-                        success = true;
-                        break;
+                            // println!("Insert {:?} prior to {:?}", log, logs[new_idx]);
+                            logs.insert(new_idx, log.clone());
+                            states.insert(new_idx, new_state);
+
+                            success = true;
+                            break;
+                        }
+
+                        new_idx -= 1;
                     }
-
-                    new_idx -= 1;
                 }
 
                 // forward searching by saving failed logs and trying next state
                 if !success {
-                    println!("Failed to fix on backward searching");
+                    // println!("Failed to fix on backward searching");
                     failed_logs.push(log);
-                    idx -= 1;
+                } else {
+                    idx += 1;
                 }
             }
-
-            idx += 1;
 
             if idx >= logs.len() {
                 break;
             }
         }
 
-        print_logs(&logs);
-        assert_eq!(failed_logs.len(), 0);
+        // print_logs(&logs);
+        // assert_eq!(failed_logs.len(), 0);
 
         verify_logs(logs);
-        return;
     }
 }
 
 // verify if the logs have no contradiction on order
-fn verify_logs<K: Debug>(logs: Vec<Log<K, u64>>) {
-    let mut state: Option<u64> = None;
+fn verify_logs<K: Debug>(mut logs: Vec<Log<K, u64>>) {
+    let mut old_log = logs.remove(0);
+    let mut state = verify_state_log(None, &old_log).unwrap();
+
     for log in logs {
-        if let Ok(new_state) = verify_state_log(state, &log) {
-            state = new_state;
+        // the old log should be former or overlapped
+        if old_log.start <= log.end {
+            if let Ok(new_state) = verify_state_log(state, &log) {
+                state = new_state;
+                old_log = log;
+
+                continue;
+            } else {
+                panic!("The log has contradition on data. old: {:?}, new: {:?}", old_log, log);
+            }
         } else {
-            panic!("The log is inconsistent. {:?}", log);
+            panic!("The log is inconsistent on time. old: {:?}, new: {:?}", old_log, log);
         }
     }
 }
