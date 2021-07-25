@@ -2,6 +2,7 @@ use crossbeam_epoch::Atomic;
 use crossbeam_epoch::Guard;
 use crossbeam_epoch::Owned;
 use crossbeam_epoch::Shared;
+use crossbeam_epoch::pin;
 use crossbeam_utils::sync::ShardedLock;
 use crossbeam_utils::sync::ShardedLockReadGuard;
 use std::fmt::Debug;
@@ -35,14 +36,6 @@ impl<K, V> NodeInner<K, V> {
         match dir {
             Dir::Left => &self.left,
             Dir::Right => &self.right,
-            Dir::Eq => unreachable!(),
-        }
-    }
-
-    fn get_child_mut(&mut self, dir: Dir) -> &mut Atomic<Node<K, V>> {
-        match dir {
-            Dir::Left => &mut self.left,
-            Dir::Right => &mut self.right,
             Dir::Eq => unreachable!(),
         }
     }
@@ -204,7 +197,7 @@ where
                                     .swap(Shared::null(), Ordering::Relaxed, guard)
                             };
 
-                            let _ = parent_write_guard.get_child(dir).swap(
+                            let current = parent_write_guard.get_child(dir).swap(
                                 replace_node,
                                 Ordering::Relaxed,
                                 guard,
@@ -212,9 +205,6 @@ where
 
                             drop(parent_write_guard);
                             drop(write_guard);
-
-                            // drop(write_guard);
-                            // drop(parent_write_guard);
 
                             // request deallocate removed node
                             unsafe {
@@ -420,5 +410,26 @@ where
         Cursor::cleanup(cursor, guard);
 
         Ok(value)
+    }
+}
+
+impl<K, V> Drop for RwLockAVLTree<K, V> {
+    fn drop(&mut self) {
+        let pin = pin();
+        let mut nodes = vec![mem::replace(&mut self.root, Atomic::null())];
+        while let Some(node) = nodes.pop() {
+            let node = unsafe { node.into_owned() };
+            let mut write_guard = node.inner.write().unwrap();
+
+            let left = mem::replace(&mut write_guard.left, Atomic::null());
+            let right = mem::replace(&mut write_guard.right, Atomic::null());
+
+            if !left.load(Ordering::Relaxed, &pin).is_null() {
+                nodes.push(left);
+            }
+            if !right.load(Ordering::Relaxed, &pin).is_null() {
+                nodes.push(right);
+            }
+        }
     }
 }

@@ -216,11 +216,12 @@ where
 
         for _ in 0..thread_num {
             let t = s.spawn(|_| {
-                let pin = pin();
                 let mut rng = thread_rng();
                 let mut logs = Vec::new();
 
                 for i in 0..iter {
+                    let pin = pin();
+
                     let key = K::gen(&mut rng);
                     let op = ops.choose(&mut rng).unwrap().clone();
 
@@ -266,6 +267,7 @@ where
                     println!("{:?} [{:0>10}] {:?}", std::thread::current().id(), i, log);
 
                     logs.push(log);
+                    drop(pin);
                 }
 
                 logs
@@ -296,7 +298,5 @@ fn assert_logs<K: Ord + Hash + Clone>(logs: Vec<Log<K, u64>>) {
             .push(log);
     }
 
-    for (key, logs) in key_logs {
-
-    }
+    for (key, logs) in key_logs {}
 }

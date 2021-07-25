@@ -1,3 +1,5 @@
+use std::u128;
+
 use rand::{distributions::Alphanumeric, prelude::ThreadRng, Rng};
 pub trait Random {
     fn gen(rng: &mut ThreadRng) -> Self;
@@ -15,6 +17,12 @@ impl Random for String {
             .map(char::from)
             .take(length)
             .collect()
+    }
+}
+
+impl Random for u128 {
+    fn gen(rng: &mut ThreadRng) -> Self {
+        rng.gen()
     }
 }
 
