@@ -80,6 +80,7 @@ struct Cursor<'g, K, V> {
 impl<'g, K, V> Cursor<'g, K, V>
 where
     K: Debug,
+    V: Debug,
 {
     fn new(tree: &RwLockAVLTree<K, V>, guard: &'g Guard) -> Cursor<'g, K, V> {
         let root = tree.root.load(Ordering::Relaxed, guard);
@@ -197,6 +198,17 @@ where
                                     .swap(Shared::null(), Ordering::Relaxed, guard)
                             };
 
+                            println!("{} {}", left.is_null(), right.is_null());
+
+                            if !replace_node.is_null() {
+                                let replace_node_ref = unsafe { replace_node.as_ref().unwrap() };
+                                let replace_node_inner = replace_node_ref.inner.read().unwrap();
+                                println!(
+                                    "Move {:?}: {:?} to parent {:?}",
+                                    replace_node_ref.key, replace_node_inner, parent_ref.key
+                                );
+                            }
+
                             let current = parent_write_guard.get_child(dir).swap(
                                 replace_node,
                                 Ordering::Relaxed,
@@ -205,6 +217,10 @@ where
 
                             drop(parent_write_guard);
                             drop(write_guard);
+
+                            let read_guard = current_ref.inner.read();
+                            println!("Current Read Guard: {:?}", read_guard);
+                            assert!(read_guard.unwrap().value.is_none());
 
                             // request deallocate removed node
                             unsafe {
@@ -313,7 +329,7 @@ where
     }
 
     fn insert(&self, key: &K, value: V, guard: &Guard) -> Result<(), V> {
-        let node = Node::new(key.clone(), value);
+        let node = Node::new(key.clone(), value.clone());
 
         // TODO: it can be optimized by re-search nearby ancestors
         loop {
@@ -337,51 +353,70 @@ where
             unsafe {
                 ManuallyDrop::drop(&mut cursor.inner_guard);
             }
+
+            // check if the current is alive now by checking parent node. If disconnected, retry
+            let parent_read_guard = if let Some((parent, dir)) = cursor.ancestors.last() {
+                let parent = unsafe { parent.as_ref().unwrap() };
+                Some((
+                    parent
+                        .inner
+                        .read()
+                        .expect(&format!("Failed to load {:?} read lock", parent.key)),
+                    dir,
+                ))
+            } else {
+                None
+            };
+
+            if let Some((parent_read_guard, dir)) = &parent_read_guard {
+                if parent_read_guard
+                    .get_child(**dir)
+                    .load(Ordering::Relaxed, guard)
+                    != cursor.current
+                {
+                    // Before inserting, the current is already disconnected.
+                    continue;
+                }
+            }
+
             let mut write_guard = current
                 .inner
                 .write()
                 .expect(&format!("Failed to load {:?} write lock", current.key));
 
-            unsafe {
-                match cursor.dir {
-                    Dir::Left => {
-                        if write_guard
-                            .left
-                            .load(Ordering::Relaxed, guard)
-                            .as_ref()
-                            .is_some()
-                        {
-                            continue; // some thread already writed. Retry
-                        }
-
-                        write_guard.left.store(Owned::new(node), Ordering::Relaxed)
+            match cursor.dir {
+                Dir::Left => {
+                    if !write_guard.left.load(Ordering::Relaxed, guard).is_null() {
+                        println!("Left Continue");
+                        continue; // some thread already writed. Retry
                     }
-                    Dir::Right => {
-                        if write_guard
-                            .right
-                            .load(Ordering::Relaxed, guard)
-                            .as_ref()
-                            .is_some()
-                        {
-                            continue; // some thread already writed. Retry
-                        }
 
-                        write_guard.right.store(Owned::new(node), Ordering::Relaxed)
+                    println!("key: {:?}, value: {:?}, written on Left", key, value);
+                    write_guard.left.store(Owned::new(node), Ordering::Relaxed);
+                }
+                Dir::Right => {
+                    if !write_guard.right.load(Ordering::Relaxed, guard).is_null() {
+                        println!("Right Continue");
+                        continue; // some thread already writed. Retry
                     }
-                    Dir::Eq => {
-                        let value = node
-                            .inner
-                            .into_inner()
-                            .expect("Failed to get data from node")
-                            .value
-                            .unwrap();
 
-                        if write_guard.value.is_some() {
-                            return Err(value);
-                        }
+                    println!("key: {:?}, value: {:?}, written on Right", key, value);
+                    write_guard.right.store(Owned::new(node), Ordering::Relaxed);
+                }
+                Dir::Eq => {
+                    let value = node
+                        .inner
+                        .into_inner()
+                        .expect("Failed to get data from node")
+                        .value
+                        .unwrap();
 
-                        write_guard.value = Some(value);
+                    if write_guard.value.is_some() {
+                        return Err(value);
                     }
+
+                    println!("key: {:?}, value: {:?}, written on Eq", key, value);
+                    write_guard.value = Some(value);
                 }
             }
 

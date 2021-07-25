@@ -333,19 +333,29 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
                 continue;
             }
 
-            for i in 0..logs.len() {
-                match logs[i].op {
+            // make logs like Insert, ..., Remove
+            let mut fixed_logs = Vec::new();
+            let mut remove_log = None;
+
+            for log in logs {
+                match log.op {
                     Operation::Insert => {
-                        let insert_log = logs.remove(i);
-                        logs.insert(0, insert_log);
+                        fixed_logs.insert(0, log);
                     }
-                    Operation::Lookup => {}
+                    Operation::Lookup =>  {
+                        fixed_logs.push(log);
+                    }
                     Operation::Remove => {
-                        let remove_log = logs.remove(i);
-                        logs.push(remove_log);
+                        remove_log = Some(log);
                     }
                 }
             }
+
+            if let Some(log) = remove_log {
+                fixed_logs.push(log);
+            }
+
+            logs = fixed_logs;
 
             println!("value: {}", value.unwrap());
             print_logs(&logs);
