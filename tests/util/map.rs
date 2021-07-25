@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::time::Duration;
 use std::time::Instant;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -306,109 +307,99 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
             .push(log);
     }
 
-    for (key, mut logs) in key_logs {
-        // println!("{:?} logs: {}", key, logs.len());
+    for (key, mut key_logs) in key_logs {
+        println!("key: {:?}, num: {}", key, key_logs.len());
+        key_logs.sort_by(|a, b| a.start.cmp(&b.start));
 
-        logs.sort_by(|a, b| a.start.cmp(&b.start));
+        let mut value_logs = HashMap::new();
 
-        // states: the states log
-        // transition: states[0] -> logs[0] -> states[1] -> logs[1] -> ...
-        let mut state: Option<u64> = None;
-        let mut states = vec![None];
-        let mut failed_logs: Vec<Log<K, u64>> = Vec::new();
+        for log in &key_logs {
+            value_logs
+                .entry(log.result.clone())
+                .or_insert_with(|| Vec::new())
+                .push(log.clone());
+        }
 
-        let mut idx = 0;
-        loop {
-            if let Ok(new_state) = verify_state_log(state, &logs[idx]) {
-                state = new_state;
-                states.push(new_state);
+        let mut error_logs: Vec<Log<K, u64>>;
 
-                // check if the failed logs can be correct
-                loop {
-                    let mut refresh = false;
-                    failed_logs.sort_by(|a, b| a.start.cmp(&b.start));
+        // LogBunch: (start, end) of Insert, (start, end) of Remove, logs
+        type LogBunch<K> = (Instant, Instant, Instant, Instant, Vec<Log<K, u64>>);
+        let mut log_bunches: Vec<LogBunch<K>> = Vec::new();
+        let mut last_flag = false;
+        for (value, mut logs) in value_logs {
+            if value == Err(()) {
+                // Error logs cannot cause side effect. Therefore, collect all in one place and interleave them into correct logs.
+                error_logs = logs;
+                continue;
+            }
 
-                    for i in 0..failed_logs.len() {
-                        if let Ok(new_state) = verify_state_log(state, &failed_logs[i]) {
-                            // println!(
-                            //     "{:?}\n can mutate {:?} to {:?} on {}",
-                            //     &failed_logs[i],
-                            //     state,
-                            //     new_state,
-                            //     idx + 1
-                            // );
-
-                            idx += 1;
-                            logs.insert(idx, failed_logs.remove(i));
-
-                            state = new_state;
-                            states.push(new_state);
-                            refresh = true;
-                            break;
-                        }
+            for i in 0..logs.len() {
+                match logs[i].op {
+                    Operation::Insert => {
+                        let insert_log = logs.remove(i);
+                        logs.insert(0, insert_log);
                     }
-
-                    if !refresh {
-                        break;
+                    Operation::Lookup => {}
+                    Operation::Remove => {
+                        let remove_log = logs.remove(i);
+                        logs.push(remove_log);
                     }
-                }
-
-                idx += 1;
-            } else {
-                let log = logs.remove(idx);
-                // println!("{:?}\n should be fixed.", log);
-
-                let mut success = false;
-
-                // only immutable log can search backward
-                if !((log.op == Operation::Insert || log.op == Operation::Remove)
-                    && log.result.is_ok()) && idx > 0
-                {
-                    // backward searching
-                    let mut new_idx = idx - 1;
-                    while logs[new_idx].end >= log.start {
-                        if let Ok(new_state) = verify_state_log(states[new_idx], &log) {
-                            assert_eq!(states[new_idx], new_state);
-
-                            // println!("Insert {:?} prior to {:?}", log, logs[new_idx]);
-                            logs.insert(new_idx, log.clone());
-                            states.insert(new_idx, new_state);
-
-                            success = true;
-                            break;
-                        }
-
-                        new_idx -= 1;
-                    }
-                }
-
-                // forward searching by saving failed logs and trying next state
-                if !success {
-                    // println!("Failed to fix on backward searching");
-                    failed_logs.push(log);
-                } else {
-                    idx += 1;
                 }
             }
 
-            if idx >= logs.len() {
-                break;
+            println!("value: {}", value.unwrap());
+            print_logs(&logs);
+            verify_logs(&logs);
+
+            // TODO: split bunch into multiple bunches if multiple insert-remove pairs exist.
+            let insert = (&logs).into_iter().filter(|x| x.op == Operation::Insert).collect::<Vec<_>>();
+            let remove = (&logs).into_iter().filter(|x| x.op == Operation::Remove).collect::<Vec<_>>();
+
+            assert_eq!(
+                insert.len(), 1,
+                "On one value, multiple insert is not checked right now."
+            );
+            assert!(
+                remove.len() <= 1,
+                "On one value, multiple remove is not checked right now."
+            );
+
+            let insert = logs.first().unwrap();
+
+            // the latest insertion on the key
+            if remove.len() == 0 {
+                if last_flag {
+                    println!("Full logs");
+                    print_logs(&key_logs);
+                    panic!("Cannot multiple insetion on last");
+                }
+
+                last_flag = true;
+                let last_instant = Instant::now()
+                    .checked_add(Duration::from_secs(300))
+                    .unwrap();
+                log_bunches.push((insert.start, insert.end, last_instant, last_instant, logs));
+            } else {
+                let remove = logs.last().unwrap();
+                log_bunches.push((insert.start, insert.end, remove.start, remove.end, logs));
             }
         }
 
-        // print_logs(&logs);
+        // merge log bunches into single log
+        log_bunches.sort_by(|a, b| a.0.cmp(&b.0));
+
         // assert_eq!(failed_logs.len(), 0);
 
-        verify_logs(logs);
+        // verify_logs(logs);
     }
 }
 
 // verify if the logs have no contradiction on order
-fn verify_logs<K: Debug>(mut logs: Vec<Log<K, u64>>) {
-    let mut old_log = logs.remove(0);
+fn verify_logs<K: Debug>(logs: &Vec<Log<K, u64>>) {
+    let mut old_log = &logs[0];
     let mut state = verify_state_log(None, &old_log).unwrap();
 
-    for log in logs {
+    for log in logs.iter().skip(1) {
         // the old log should be former or overlapped
         if old_log.start <= log.end {
             if let Ok(new_state) = verify_state_log(state, &log) {
@@ -417,10 +408,16 @@ fn verify_logs<K: Debug>(mut logs: Vec<Log<K, u64>>) {
 
                 continue;
             } else {
-                panic!("The log has contradition on data. old: {:?}, new: {:?}", old_log, log);
+                panic!(
+                    "The log has contradition on data. old: {:?}, new: {:?}",
+                    old_log, log
+                );
             }
         } else {
-            panic!("The log is inconsistent on time. old: {:?}, new: {:?}", old_log, log);
+            panic!(
+                "The log is inconsistent on time. old: {:?}, new: {:?}",
+                old_log, log
+            );
         }
     }
 }
