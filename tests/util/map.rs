@@ -333,21 +333,15 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
                 continue;
             }
 
-            // make logs like Insert, ..., Remove
+            // make logs like [Insert, ..., Remove]
             let mut fixed_logs = Vec::new();
             let mut remove_log = None;
 
             for log in logs {
                 match log.op {
-                    Operation::Insert => {
-                        fixed_logs.insert(0, log);
-                    }
-                    Operation::Lookup =>  {
-                        fixed_logs.push(log);
-                    }
-                    Operation::Remove => {
-                        remove_log = Some(log);
-                    }
+                    Operation::Insert => fixed_logs.insert(0, log),
+                    Operation::Lookup => fixed_logs.push(log),
+                    Operation::Remove => remove_log = Some(log),
                 }
             }
 
@@ -361,11 +355,18 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
             verify_logs(&logs);
 
             // TODO: split bunch into multiple bunches if multiple insert-remove pairs exist.
-            let insert = (&logs).into_iter().filter(|x| x.op == Operation::Insert).collect::<Vec<_>>();
-            let remove = (&logs).into_iter().filter(|x| x.op == Operation::Remove).collect::<Vec<_>>();
+            let insert = (&logs)
+                .into_iter()
+                .filter(|x| x.op == Operation::Insert)
+                .collect::<Vec<_>>();
+            let remove = (&logs)
+                .into_iter()
+                .filter(|x| x.op == Operation::Remove)
+                .collect::<Vec<_>>();
 
             assert_eq!(
-                insert.len(), 1,
+                insert.len(),
+                1,
                 "On one value, multiple insert is not checked right now."
             );
             assert!(
@@ -394,12 +395,39 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
             }
         }
 
-        // merge log bunches into single log
+        // rearrange batches by correctness
         log_bunches.sort_by(|a, b| a.0.cmp(&b.0));
 
-        // assert_eq!(failed_logs.len(), 0);
+        let mut i = 1;
+        while i < log_bunches.len() {
+            if log_bunches[i - 1].1 > log_bunches[i].0 {
+                // the insertion areas are overlapped
 
-        // verify_logs(logs);
+                if log_bunches[i - 1].1 > log_bunches[i].1 {
+                    if log_bunches[i - 1].1 > log_bunches[i].2 {
+                        // the new one finished inserting before finishing the old one's inserting
+                        // and the old one finished inserting before starting the old one's removing: reverse their order
+
+                        println!("Swapped:");
+                        println!("old: {:?}", log_bunches[i - 1]);
+                        println!("new: {:?}", log_bunches[i]);
+
+                        log_bunches.swap(i - 1, i);
+                    }
+                }
+            }
+
+            i += 1;
+        }
+
+        // merge log bunches into single log
+        let logs: Vec<Log<K, u64>> = log_bunches
+            .into_iter()
+            .map(|bunch| bunch.4)
+            .flatten()
+            .collect();
+
+        verify_logs(&logs);
     }
 }
 

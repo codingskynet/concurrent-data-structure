@@ -198,17 +198,6 @@ where
                                     .swap(Shared::null(), Ordering::Relaxed, guard)
                             };
 
-                            println!("{} {}", left.is_null(), right.is_null());
-
-                            if !replace_node.is_null() {
-                                let replace_node_ref = unsafe { replace_node.as_ref().unwrap() };
-                                let replace_node_inner = replace_node_ref.inner.read().unwrap();
-                                println!(
-                                    "Move {:?}: {:?} to parent {:?}",
-                                    replace_node_ref.key, replace_node_inner, parent_ref.key
-                                );
-                            }
-
                             let current = parent_write_guard.get_child(dir).swap(
                                 replace_node,
                                 Ordering::Relaxed,
@@ -217,10 +206,6 @@ where
 
                             drop(parent_write_guard);
                             drop(write_guard);
-
-                            let read_guard = current_ref.inner.read();
-                            println!("Current Read Guard: {:?}", read_guard);
-                            assert!(read_guard.unwrap().value.is_none());
 
                             // request deallocate removed node
                             unsafe {
@@ -387,7 +372,6 @@ where
             match cursor.dir {
                 Dir::Left => {
                     if !write_guard.left.load(Ordering::Relaxed, guard).is_null() {
-                        println!("Left Continue");
                         continue; // some thread already writed. Retry
                     }
 
@@ -395,7 +379,6 @@ where
                 }
                 Dir::Right => {
                     if !write_guard.right.load(Ordering::Relaxed, guard).is_null() {
-                        println!("Right Continue");
                         continue; // some thread already writed. Retry
                     }
 
