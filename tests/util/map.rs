@@ -400,30 +400,35 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
         // rearrange batches by correctness
         log_bunches.sort_by(|a, b| a.0.cmp(&b.0));
 
-        // TODO: find the correct log bunches rearrangement
-        // use DFS:
-        // 1) Insert b_1(bunch) into []
-        // i+1) For [b_1, ..., b_i], try insert b_{i+1}. If failed, insert b_{i+1} moving backward.
-        //      (ex. try inserting [b_1, ..., b_{i - 3}, b_{i + 1}, b_{i - 2}, b_{i - 1}, b_i])
-        //      If failed to try all case on [b_1, ..., b_i], go back [b_1, ..., b_{i - 1}] and try inserting b_i on other place.
-        //      If failed to try all case on the list, the program is incorrect.
+        let before = log_bunches.len();
 
         let mut log_bunches = VecDeque::from(log_bunches);
         let mut final_log_bunches = vec![log_bunches.pop_front().unwrap()];
 
         rearrange_log_bunches(&mut final_log_bunches, &mut log_bunches).expect("msg");
 
+        assert_eq!(before, final_log_bunches.len());
+
         // merge log bunches into single log
-        let logs: Vec<Log<K, u64>> = log_bunches
+        let logs: Vec<Log<K, u64>> = final_log_bunches
             .into_iter()
             .map(|bunch| bunch.4)
             .flatten()
             .collect();
 
-        verify_logs(logs.iter().collect::<Vec<_>>());
+        assert!(verify_logs(logs.iter().collect::<Vec<_>>()));
     }
 }
 
+// rearrange log bunches to be correct
+//
+// to use this function, please set first element into now_log_bunches by front poping from rest_log_bunches
+// use DFS:
+// 1) Insert b_1(bunch) into []
+// i+1) For [b_1, ..., b_i], try insert b_{i+1}. If failed, insert b_{i+1} moving backward.
+//      (ex. try inserting [b_1, ..., b_{i - 3}, b_{i + 1}, b_{i - 2}, b_{i - 1}, b_i])
+//      If failed to try all case on [b_1, ..., b_i], go back [b_1, ..., b_{i - 1}] and try inserting b_i on other place.
+//      If failed to try all case on the list, the program is incorrect.
 fn rearrange_log_bunches<K: Debug, V: Clone + Debug + PartialEq>(
     now_log_bunches: &mut Vec<LogBunch<K, V>>,
     rest_log_bunches: &mut VecDeque<LogBunch<K, V>>,
@@ -431,13 +436,6 @@ fn rearrange_log_bunches<K: Debug, V: Clone + Debug + PartialEq>(
     if rest_log_bunches.is_empty() {
         return Ok(());
     }
-
-    // remove unnecessary branch by insert one element before executing this function
-    // if now_log_bunches.is_empty() {
-    //     now_log_bunches.push(rest_log_bunches.pop_front().unwrap());
-
-    //     return rearrange_log_bunches(now_log_bunches, rest_log_bunches);
-    // }
 
     if verify_log_bunches(vec![
         now_log_bunches.last().unwrap(),
@@ -512,19 +510,11 @@ fn verify_logs<K: Debug, V: Clone + Debug + PartialEq>(logs: Vec<&Log<K, V>>) ->
 
                 continue;
             } else {
-                println!(
-                    "The log has contradition on data. old: {:?}, new: {:?}",
-                    old_log, log
-                );
-
+                // The log has contradition on data
                 return false;
             }
         } else {
-            println!(
-                "The log is inconsistent on time. old: {:?}, new: {:?}",
-                old_log, log
-            );
-
+            // The log is inconsistent on time
             return false;
         }
     }
