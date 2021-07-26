@@ -329,7 +329,7 @@ where
     }
 
     fn insert(&self, key: &K, value: V, guard: &Guard) -> Result<(), V> {
-        let node = Node::new(key.clone(), value.clone());
+        let node = Node::new(key.clone(), value);
 
         // TODO: it can be optimized by re-search nearby ancestors
         loop {
@@ -391,7 +391,6 @@ where
                         continue; // some thread already writed. Retry
                     }
 
-                    println!("key: {:?}, value: {:?}, written on Left", key, value);
                     write_guard.left.store(Owned::new(node), Ordering::Relaxed);
                 }
                 Dir::Right => {
@@ -400,7 +399,6 @@ where
                         continue; // some thread already writed. Retry
                     }
 
-                    println!("key: {:?}, value: {:?}, written on Right", key, value);
                     write_guard.right.store(Owned::new(node), Ordering::Relaxed);
                 }
                 Dir::Eq => {
@@ -415,7 +413,6 @@ where
                         return Err(value);
                     }
 
-                    println!("key: {:?}, value: {:?}, written on Eq", key, value);
                     write_guard.value = Some(value);
                 }
             }

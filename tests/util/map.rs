@@ -308,7 +308,7 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
     }
 
     for (key, mut key_logs) in key_logs {
-        println!("key: {:?}, num: {}", key, key_logs.len());
+        // println!("key: {:?}, num: {}", key, key_logs.len());
         key_logs.sort_by(|a, b| a.start.cmp(&b.start));
 
         let mut value_logs = HashMap::new();
@@ -357,8 +357,7 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
 
             logs = fixed_logs;
 
-            println!("value: {}", value.unwrap());
-            print_logs(&logs);
+            // print_logs(&logs);
             verify_logs(&logs);
 
             // TODO: split bunch into multiple bunches if multiple insert-remove pairs exist.
@@ -379,7 +378,7 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
             // the latest insertion on the key
             if remove.len() == 0 {
                 if last_flag {
-                    println!("Full logs");
+                    println!("Full logs of key: {:?}, value: {:?}", key, value);
                     print_logs(&key_logs);
                     panic!("Cannot multiple insetion on last");
                 }
