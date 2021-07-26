@@ -424,6 +424,7 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
         error_logs.sort_by(|a, b| a.start.cmp(&b.start));
 
         // check if error_log[j] can be inserted between logs[i - 1], log[i]
+        // coarse O(n^2) is better?
         let mut i = 0;
         loop {
             let mut j = 0;
