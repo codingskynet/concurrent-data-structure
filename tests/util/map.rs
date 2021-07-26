@@ -203,6 +203,9 @@ struct Log<K, V> {
     result: Result<V, ()>,
 }
 
+// LogBunch: (start, end) of Insert, (start, end) of Remove, logs
+type LogBunch<K, V> = (Instant, Instant, Instant, Instant, Vec<Log<K, V>>);
+
 fn print_logs<K: Debug>(logs: &Vec<Log<K, u64>>) {
     for log in logs {
         println!("{:?}", log);
@@ -322,9 +325,7 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
 
         let mut error_logs: Vec<Log<K, u64>>;
 
-        // LogBunch: (start, end) of Insert, (start, end) of Remove, logs
-        type LogBunch<K> = (Instant, Instant, Instant, Instant, Vec<Log<K, u64>>);
-        let mut log_bunches: Vec<LogBunch<K>> = Vec::new();
+        let mut log_bunches: Vec<LogBunch<K, u64>> = Vec::new();
         let mut last_flag = false;
         for (value, mut logs) in value_logs {
             if value == Err(()) {
@@ -398,27 +399,13 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
         // rearrange batches by correctness
         log_bunches.sort_by(|a, b| a.0.cmp(&b.0));
 
-        let mut i = 1;
-        while i < log_bunches.len() {
-            if log_bunches[i - 1].1 > log_bunches[i].0 {
-                // the insertion areas are overlapped
-
-                if log_bunches[i - 1].1 > log_bunches[i].1 {
-                    if log_bunches[i - 1].1 > log_bunches[i].2 {
-                        // the new one finished inserting before finishing the old one's inserting
-                        // and the old one finished inserting before starting the old one's removing: reverse their order
-
-                        println!("Swapped:");
-                        println!("old: {:?}", log_bunches[i - 1]);
-                        println!("new: {:?}", log_bunches[i]);
-
-                        log_bunches.swap(i - 1, i);
-                    }
-                }
-            }
-
-            i += 1;
-        }
+        // TODO: find the correct log bunches rearrangement
+        // use DFS:
+        // 1) Insert b_1(bunch) into []
+        // i+1) For [b_1, ..., b_i], try insert b_{i+1}. If failed, insert b_{i+1} moving backward.
+        //      (ex. try inserting [b_1, ..., b_{i - 3}, b_{i + 1}, b_{i - 2}, b_{i - 1}, b_i])
+        //      If failed to try all case on [b_1, ..., b_i], go back [b_1, ..., b_{i - 1}] and try inserting b_i on other place.
+        //      If failed to try all case on the list, the program is incorrect.
 
         // merge log bunches into single log
         let logs: Vec<Log<K, u64>> = log_bunches
