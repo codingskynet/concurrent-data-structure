@@ -36,5 +36,5 @@ fn stress_rwlock_avl_tree_sequential() {
 
 #[test]
 fn stress_rwlock_avl_tree_concurrent() {
-    stress_concurrent::<u8, RwLockAVLTree<_, _>>(200_000, 32);
+    stress_concurrent::<u8, RwLockAVLTree<_, _>>(10_000, 1);
 }

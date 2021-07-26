@@ -5,6 +5,7 @@ use crossbeam_epoch::pin;
 use crossbeam_utils::thread;
 use rand::prelude::SliceRandom;
 use rand::prelude::ThreadRng;
+use rand::rngs::mock;
 use rand::thread_rng;
 use rand::Rng;
 use std::collections::BTreeMap;
@@ -230,7 +231,7 @@ where
                 let mut rng = thread_rng();
                 let mut logs = Vec::new();
 
-                for i in 0..iter {
+                for _ in 0..iter {
                     let pin = pin();
 
                     let key = K::gen(&mut rng);
@@ -324,7 +325,7 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
                 .push(log.clone());
         }
 
-        let mut error_logs: Vec<Log<K, u64>>;
+        let mut error_logs = Vec::new();
 
         let mut log_bunches: Vec<LogBunch<K, u64>> = Vec::new();
         let mut last_flag = false;
@@ -405,19 +406,78 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
         let mut log_bunches = VecDeque::from(log_bunches);
         let mut final_log_bunches = vec![log_bunches.pop_front().unwrap()];
 
-        rearrange_log_bunches(&mut final_log_bunches, &mut log_bunches).expect("msg");
+        rearrange_log_bunches(&mut final_log_bunches, &mut log_bunches)
+            .expect("Failed to rearrange logs to be correct");
 
         assert_eq!(before, final_log_bunches.len());
 
         // merge log bunches into single log
-        let logs: Vec<Log<K, u64>> = final_log_bunches
+        let mut logs: Vec<Log<K, u64>> = final_log_bunches
             .into_iter()
             .map(|bunch| bunch.4)
             .flatten()
             .collect();
 
         assert!(verify_logs(logs.iter().collect::<Vec<_>>()));
+
+        // insert error log into correctly rearranged logs
+        error_logs.sort_by(|a, b| a.start.cmp(&b.start));
+
+        // check if error_log[j] can be inserted between logs[i - 1], log[i]
+        let mut i = 0;
+        loop {
+            let mut j = 0;
+            loop {
+                let mut test_logs = Vec::new();
+
+                if i > 0 {
+                    test_logs.push(&logs[i - 1]);
+                }
+
+                test_logs.push(&error_logs[j]);
+
+                if i < logs.len() {
+                    test_logs.push(&logs[i]);
+                }
+
+                if check_logs(test_logs.clone()) {
+                    println!("Insertion:");
+                    println!("{:?}", test_logs);
+                    logs.insert(i, error_logs.remove(j));
+                    i += 1;
+                } else {
+                    j += 1;
+                }
+
+                if j >= error_logs.len() {
+                    break;
+                }
+            }
+
+            i += 1;
+            if i > logs.len() {
+                break;
+            }
+        }
+
+        assert_eq!(error_logs.len(), 0);
+        assert!(verify_logs(logs.iter().collect::<Vec<_>>()));
     }
+}
+
+// check if the logs[log?, failed_log, log?] are consistent
+fn check_logs<K, V>(logs: Vec<&Log<K, V>>) -> bool {
+    let mut old_log = logs[0];
+
+    for log in logs.iter().skip(1) {
+        if verify_log_log(old_log, log) {
+            old_log = log;
+        } else {
+            return false;
+        }
+    }
+
+    true
 }
 
 // rearrange log bunches to be correct
@@ -583,5 +643,41 @@ fn verify_state_log<K, V: Clone + PartialEq>(
                 }
             }
         }
+    }
+}
+
+/*
+  check if the two logs are consistent, not checking mutating state
+
+  - rules:
+    if   insert(success) ->    insert(fail), lookup(success), remove(success)
+    if   lookup(success) ->    insert(fail), lookup(success), remove(success)
+    else remove(success) -> insert(success),    lookup(fail),    remove(fail)
+    if      insert(fail) ->    insert(fail), lookup(success), remove(success)
+    else    lookup(fail) -> insert(success),    lookup(fail),    remove(fail)
+    else    remove(fail) -> insert(success),    lookup(fail),    remove(fail)
+*/
+fn verify_log_log<K, V>(old: &Log<K, V>, new: &Log<K, V>) -> bool {
+    if old.start <= new.end {
+        if old.op == Operation::Insert || (old.op == Operation::Lookup && old.result.is_ok()) {
+            if !(new.op == Operation::Insert && new.result.is_err())
+                || ((new.op == Operation::Lookup || new.op == Operation::Remove)
+                    && new.result.is_ok())
+            {
+                return false;
+            }
+        } else {
+            if !(new.op == Operation::Insert && new.result.is_ok())
+                || ((new.op == Operation::Lookup || new.op == Operation::Remove)
+                    && new.result.is_err())
+            {
+                return false;
+            }
+        }
+
+        true
+    } else {
+        // The log is inconsistent on time
+        false
     }
 }
