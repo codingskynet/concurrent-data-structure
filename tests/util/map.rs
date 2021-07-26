@@ -9,6 +9,7 @@ use rand::thread_rng;
 use rand::Rng;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -353,7 +354,7 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
             logs = fixed_logs;
 
             // print_logs(&logs);
-            verify_logs(&logs);
+            verify_logs(logs.iter().collect::<Vec<_>>());
 
             // TODO: split bunch into multiple bunches if multiple insert-remove pairs exist.
             let insert = (&logs)
@@ -407,6 +408,11 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
         //      If failed to try all case on [b_1, ..., b_i], go back [b_1, ..., b_{i - 1}] and try inserting b_i on other place.
         //      If failed to try all case on the list, the program is incorrect.
 
+        let mut log_bunches = VecDeque::from(log_bunches);
+        let mut final_log_bunches = vec![log_bunches.pop_front().unwrap()];
+
+        rearrange_log_bunches(&mut final_log_bunches, &mut log_bunches).expect("msg");
+
         // merge log bunches into single log
         let logs: Vec<Log<K, u64>> = log_bunches
             .into_iter()
@@ -414,12 +420,86 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
             .flatten()
             .collect();
 
-        verify_logs(&logs);
+        verify_logs(logs.iter().collect::<Vec<_>>());
     }
 }
 
+fn rearrange_log_bunches<K: Debug, V: Clone + Debug + PartialEq>(
+    now_log_bunches: &mut Vec<LogBunch<K, V>>,
+    rest_log_bunches: &mut VecDeque<LogBunch<K, V>>,
+) -> Result<(), ()> {
+    if rest_log_bunches.is_empty() {
+        return Ok(());
+    }
+
+    // remove unnecessary branch by insert one element before executing this function
+    // if now_log_bunches.is_empty() {
+    //     now_log_bunches.push(rest_log_bunches.pop_front().unwrap());
+
+    //     return rearrange_log_bunches(now_log_bunches, rest_log_bunches);
+    // }
+
+    if verify_log_bunches(vec![
+        now_log_bunches.last().unwrap(),
+        rest_log_bunches.front().unwrap(),
+    ]) {
+        // very good case: just push now log bunch into full logs
+        now_log_bunches.push(rest_log_bunches.pop_front().unwrap());
+
+        let result = rearrange_log_bunches(now_log_bunches, rest_log_bunches);
+
+        if result.is_ok() {
+            return Ok(());
+        }
+
+        rest_log_bunches.push_front(now_log_bunches.pop().unwrap());
+    }
+
+    // try to insert it on best place like [i - 1, it, i]
+    for i in (0..now_log_bunches.len()).rev() {
+        if now_log_bunches[i].3 < rest_log_bunches.front().unwrap().0 {
+            // if the target cannot be followed by now_log_bunches[i], it cannot be inserted. So, break.
+            break;
+        }
+
+        let mut test_bunches = vec![];
+
+        if i >= 1 {
+            test_bunches.push(&now_log_bunches[i - 1]);
+        }
+
+        test_bunches.push(rest_log_bunches.front().unwrap());
+        test_bunches.push(&now_log_bunches[i]);
+
+        if verify_log_bunches(test_bunches) {
+            now_log_bunches.insert(i, rest_log_bunches.pop_front().unwrap());
+
+            let result = rearrange_log_bunches(now_log_bunches, rest_log_bunches);
+
+            if result.is_ok() {
+                return Ok(());
+            }
+
+            rest_log_bunches.push_front(now_log_bunches.pop().unwrap());
+        }
+    }
+
+    Err(())
+}
+
+fn verify_log_bunches<K: Debug, V: Clone + Debug + PartialEq>(
+    log_bunches: Vec<&LogBunch<K, V>>,
+) -> bool {
+    let merged_logs = log_bunches
+        .iter()
+        .map(|x| &x.4)
+        .flatten()
+        .collect::<Vec<_>>();
+    verify_logs(merged_logs)
+}
+
 // verify if the logs have no contradiction on order
-fn verify_logs<K: Debug>(logs: &Vec<Log<K, u64>>) {
+fn verify_logs<K: Debug, V: Clone + Debug + PartialEq>(logs: Vec<&Log<K, V>>) -> bool {
     let mut old_log = &logs[0];
     let mut state = verify_state_log(None, &old_log).unwrap();
 
@@ -432,34 +512,43 @@ fn verify_logs<K: Debug>(logs: &Vec<Log<K, u64>>) {
 
                 continue;
             } else {
-                panic!(
+                println!(
                     "The log has contradition on data. old: {:?}, new: {:?}",
                     old_log, log
                 );
+
+                return false;
             }
         } else {
-            panic!(
+            println!(
                 "The log is inconsistent on time. old: {:?}, new: {:?}",
                 old_log, log
             );
+
+            return false;
         }
     }
+
+    true
 }
 
 // verify if the log is correct to set on right next of the state
 // if correct, return Ok() with next state
 // if not correct, Err(())
-fn verify_state_log<K>(state: Option<u64>, log: &Log<K, u64>) -> Result<Option<u64>, ()> {
+fn verify_state_log<K, V: Clone + PartialEq>(
+    state: Option<V>,
+    log: &Log<K, V>,
+) -> Result<Option<V>, ()> {
     match log.op {
         Operation::Insert => {
-            if let Some(_) = state {
+            if let Some(_) = state.clone() {
                 if let Ok(_) = log.result {
                     Err(())
                 } else {
                     Ok(state)
                 }
             } else {
-                if let Ok(v) = log.result {
+                if let Ok(v) = log.result.clone() {
                     Ok(Some(v))
                 } else {
                     Err(())
@@ -467,8 +556,8 @@ fn verify_state_log<K>(state: Option<u64>, log: &Log<K, u64>) -> Result<Option<u
             }
         }
         Operation::Lookup => {
-            if let Some(s) = state {
-                if let Ok(v) = log.result {
+            if let Some(s) = state.clone() {
+                if let Ok(v) = log.result.clone() {
                     if s == v {
                         Ok(state)
                     } else {
@@ -486,8 +575,8 @@ fn verify_state_log<K>(state: Option<u64>, log: &Log<K, u64>) -> Result<Option<u
             }
         }
         Operation::Remove => {
-            if let Some(s) = state {
-                if let Ok(v) = log.result {
+            if let Some(s) = state.clone() {
+                if let Ok(v) = log.result.clone() {
                     if s == v {
                         Ok(None)
                     } else {
