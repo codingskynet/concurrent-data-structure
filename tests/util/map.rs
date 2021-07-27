@@ -397,7 +397,7 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
         }
 
         if log_bunches.is_empty() {
-            // There are only error logs. Therefore, we just check if the log is lookup(error) or remove(error).
+            // There are only error logs or not. Therefore, we just check if the log is lookup(error) or remove(error).
 
             for error_log in error_logs {
                 if error_log.op == Operation::Insert {
