@@ -421,6 +421,11 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
 
         assert_eq!(before, final_log_bunches.len());
 
+        if last_flag {
+            let last_op = &final_log_bunches.last().unwrap().4.last().unwrap().op;
+            assert!(*last_op != Operation::Remove);
+        }
+
         // check if the error log can be caused as error
         //
         // the error of insert: ok when its area is overlapped by the success of insertion or the success of removal
@@ -432,29 +437,31 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
         println!("error_logs: {:?}", error_logs);
         println!("log bunches: {:?}", final_log_bunches);
 
-        // if the final_logs_bunches.len() == 1, check the error logs by the unique log bunch
-        if final_log_bunches.len() == 1 {
-            let log_bunch = &final_log_bunches[0];
+        // check the first range by first log bunch
+        {
+            let first_log_bunch = final_log_bunches.first().unwrap();
 
             let mut i = 0;
             while i < error_logs.len() {
                 let error_log = &error_logs[i];
 
-                if error_log.start < log_bunch.3 {
+                if error_log.start < first_log_bunch.3 {
                     // the error log is overlapped by the range of the bunch
                     match error_log.op {
                         Operation::Insert => {
-                            if error_log.start < log_bunch.1 || error_log.start < log_bunch.3 {
+                            // insert overlapping first_log_bunch's inserting or removing,
+                            // or between first_log_bunch's finishing inserting and starting removing
+                            if (error_log.start < first_log_bunch.1 && error_log.end > first_log_bunch.0)
+                                || (error_log.start < first_log_bunch.3 && error_log.end > first_log_bunch.2)
+                                || (error_log.start < first_log_bunch.2 && error_log.end > first_log_bunch.1)
+                            {
                                 error_logs.remove(i);
                                 continue;
                             }
                         }
                         Operation::Lookup | Operation::Remove => {
-                            if (error_log.start < log_bunch.1)
-                                || (log_bunch.4.last().unwrap().op == Operation::Remove
-                                    && error_log.end > log_bunch.2)
-                            {
-                                // they can be correct if the removal occured, or should be incorrect
+                            // lookup/remove overlapping or before first_log_bunch's inserting,
+                            if error_log.start < first_log_bunch.1 {
                                 error_logs.remove(i);
                                 continue;
                             }
@@ -470,26 +477,74 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
             }
         }
 
+        // check the middle range by the two log bunches
         for bunches in final_log_bunches.windows(2) {
             let old = &bunches[0];
             let new = &bunches[1];
-            let (_, end) = (old.0, new.1); // from starting old insertion to ending new insertion
+            let (start, end) = (old.1, new.1); // from finishing old inserting to finishing new inserting
 
             let mut i = 0;
             while i < error_logs.len() {
                 let error_log = &error_logs[i];
 
-                if error_log.start < end {
-                    // the error log is overlapped by the range of the two bunches
+                if error_log.start < end && error_log.end > start {
+                    // the error log is overlapped by the range
                     match error_log.op {
                         Operation::Insert => {
-                            if error_log.start < old.1 || error_log.start < old.3 {
+                            // insert overlapping old removal and new insertion,
+                            // or between finishing old insertion and starting old removal
+                            if error_log.start < old.3
+                                || (error_log.start < new.1 && error_log.end > new.0)
+                            {
                                 error_logs.remove(i);
                                 continue;
                             }
                         }
                         Operation::Lookup | Operation::Remove => {
-                            if error_log.start < old.3 || error_log.start < new.1 {
+                            // lookup/remove overlapping old removal and new insertion,
+                            // or between finishing old removal and starting new insertion
+                            if error_log.end < old.2 || error_log.end > new.0 {
+                                error_logs.remove(i);
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    // it or later error log cannot be overlapped by the range of the two bunches
+                    // therefore, break and try on next range
+                    break;
+                }
+
+                i += 1;
+            }
+        }
+
+        // check the last range by the log bunch
+        {
+            let last_log_bunch = final_log_bunches.last().unwrap();
+
+            let mut i = 0;
+            while i < error_logs.len() {
+                let error_log = &error_logs[i];
+
+                if error_log.start < last_log_bunch.3 {
+                    // the error log is overlapped by the range of the bunch
+                    match error_log.op {
+                        Operation::Insert => {
+                            // insert overlapping first_log_bunch's removing,
+                            // or between first_log_bunch's finishing inserting and starting removing
+                            if (error_log.start < last_log_bunch.3 && error_log.end > last_log_bunch.2)
+                                || (error_log.start < last_log_bunch.2 && error_log.end > last_log_bunch.1)
+                            {
+                                error_logs.remove(i);
+                                continue;
+                            }
+                        }
+                        Operation::Lookup | Operation::Remove => {
+                            if last_log_bunch.4.last().unwrap().op == Operation::Remove
+                                && error_log.end > last_log_bunch.2
+                            {
+                                // they can be correct if the removal occured, or should be incorrect
                                 error_logs.remove(i);
                                 continue;
                             }
@@ -516,21 +571,6 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
 
         assert!(verify_logs(logs.iter().collect::<Vec<_>>()));
     }
-}
-
-// check if the logs[log?, failed_log, log?] are consistent
-fn check_logs<K, V>(logs: Vec<&Log<K, V>>) -> bool {
-    let mut old_log = logs[0];
-
-    for log in logs.iter().skip(1) {
-        if verify_log_log(old_log, log) {
-            old_log = log;
-        } else {
-            return false;
-        }
-    }
-
-    true
 }
 
 // rearrange log bunches to be correct
@@ -696,41 +736,5 @@ fn verify_state_log<K, V: Clone + PartialEq>(
                 }
             }
         }
-    }
-}
-
-/*
-  check if the two logs are consistent, not checking mutating state
-
-  - rules:
-    if   insert(success) ->    insert(fail), lookup(success), remove(success)
-    if   lookup(success) ->    insert(fail), lookup(success), remove(success)
-    else remove(success) -> insert(success),    lookup(fail),    remove(fail)
-    if      insert(fail) ->    insert(fail), lookup(success), remove(success)
-    else    lookup(fail) -> insert(success),    lookup(fail),    remove(fail)
-    else    remove(fail) -> insert(success),    lookup(fail),    remove(fail)
-*/
-fn verify_log_log<K, V>(old: &Log<K, V>, new: &Log<K, V>) -> bool {
-    if old.start <= new.end {
-        if old.op == Operation::Insert || (old.op == Operation::Lookup && old.result.is_ok()) {
-            if !(new.op == Operation::Insert && new.result.is_err())
-                || ((new.op == Operation::Lookup || new.op == Operation::Remove)
-                    && new.result.is_ok())
-            {
-                return false;
-            }
-        } else {
-            if !(new.op == Operation::Insert && new.result.is_ok())
-                || ((new.op == Operation::Lookup || new.op == Operation::Remove)
-                    && new.result.is_err())
-            {
-                return false;
-            }
-        }
-
-        true
-    } else {
-        // The log is inconsistent on time
-        false
     }
 }
