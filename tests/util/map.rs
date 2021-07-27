@@ -428,6 +428,48 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
         //              remove: same to the error of lookup
         error_logs.sort_by(|a, b| a.start.cmp(&b.start));
 
+        println!("key: {:?}", key);
+        println!("error_logs: {:?}", error_logs);
+        println!("log bunches: {:?}", final_log_bunches);
+
+        // if the final_logs_bunches.len() == 1, check the error logs by the unique log bunch
+        if final_log_bunches.len() == 1 {
+            let log_bunch = &final_log_bunches[0];
+
+            let mut i = 0;
+            while i < error_logs.len() {
+                let error_log = &error_logs[i];
+
+                if error_log.start < log_bunch.3 {
+                    // the error log is overlapped by the range of the bunch
+                    match error_log.op {
+                        Operation::Insert => {
+                            if error_log.start < log_bunch.1 || error_log.start < log_bunch.3 {
+                                error_logs.remove(i);
+                                continue;
+                            }
+                        }
+                        Operation::Lookup | Operation::Remove => {
+                            if (error_log.start < log_bunch.1)
+                                || (log_bunch.4.last().unwrap().op == Operation::Remove
+                                    && error_log.end > log_bunch.2)
+                            {
+                                // they can be correct if the removal occured, or should be incorrect
+                                error_logs.remove(i);
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    // it or later error log cannot be overlapped by the range of the two bunches
+                    // therefore, break and try on next range
+                    break;
+                }
+
+                i += 1;
+            }
+        }
+
         for bunches in final_log_bunches.windows(2) {
             let old = &bunches[0];
             let new = &bunches[1];
