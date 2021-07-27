@@ -426,16 +426,13 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
             assert!(*last_op != Operation::Remove);
         }
 
-        // check if the error log can be caused as error
+        // check if the error log has contradiction
         //
-        // the error of insert: ok when its area is overlapped by the success of insertion or the success of removal
-        //              lookup: ok when its area is overlapped by the success of removal or the success of insertion
-        //              remove: same to the error of lookup
+        // insert: if the error log occurs between finishing removing and starting inserting, it is a contradiction
+        // lookup/remove: if the error log occurs between finishing inserting and starting removing, it is a contradiction
         error_logs.sort_by(|a, b| a.start.cmp(&b.start));
 
-        println!("key: {:?}", key);
-        println!("error_logs: {:?}", error_logs);
-        println!("log bunches: {:?}", final_log_bunches);
+        let mut error_logs = VecDeque::from(error_logs);
 
         // check the first range by first log bunch
         {
@@ -449,31 +446,20 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
                     // the error log is overlapped by the range of the bunch
                     match error_log.op {
                         Operation::Insert => {
-                            // insert overlapping first_log_bunch's inserting or removing,
-                            // or between first_log_bunch's finishing inserting and starting removing
-                            if (error_log.start < first_log_bunch.1 && error_log.end > first_log_bunch.0)
-                                || (error_log.start < first_log_bunch.3 && error_log.end > first_log_bunch.2)
-                                || (error_log.start < first_log_bunch.2 && error_log.end > first_log_bunch.1)
-                            {
+                            if error_log.end < first_log_bunch.0 {
+                                panic!(
+                                    "The error log {:?} has contradiction on {:?}.",
+                                    error_log, first_log_bunch
+                                );
+                            } else {
                                 error_logs.remove(i);
-                                continue;
                             }
                         }
-                        Operation::Lookup | Operation::Remove => {
-                            // lookup/remove overlapping or before first_log_bunch's inserting,
-                            if error_log.start < first_log_bunch.1 {
-                                error_logs.remove(i);
-                                continue;
-                            }
-                        }
+                        _ => i += 1,
                     }
                 } else {
-                    // it or later error log cannot be overlapped by the range of the two bunches
-                    // therefore, break and try on next range
                     break;
                 }
-
-                i += 1;
             }
         }
 
@@ -481,41 +467,39 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
         for bunches in final_log_bunches.windows(2) {
             let old = &bunches[0];
             let new = &bunches[1];
-            let (start, end) = (old.1, new.1); // from finishing old inserting to finishing new inserting
+            let (start, end) = (
+                vec![old.0, old.2, new.0, new.2].into_iter().min().unwrap(),
+                vec![old.1, old.3, new.1, new.3].into_iter().max().unwrap(),
+            ); // the range of the bunch
 
-            let mut i = 0;
-            while i < error_logs.len() {
-                let error_log = &error_logs[i];
-
+            while let Some(error_log) = error_logs.front() {
                 if error_log.start < end && error_log.end > start {
                     // the error log is overlapped by the range
                     match error_log.op {
                         Operation::Insert => {
-                            // insert overlapping old removal and new insertion,
-                            // or between finishing old insertion and starting old removal
-                            if error_log.start < old.3
-                                || (error_log.start < new.1 && error_log.end > new.0)
-                            {
-                                error_logs.remove(i);
-                                continue;
+                            if old.3 < error_log.start && error_log.end < new.0 {
+                                panic!(
+                                    "The error log {:?} has contradiction on {:?}.",
+                                    error_log, old
+                                );
+                            } else {
+                                error_logs.pop_front();
                             }
                         }
                         Operation::Lookup | Operation::Remove => {
-                            // lookup/remove overlapping old removal and new insertion,
-                            // or between finishing old removal and starting new insertion
-                            if error_log.end < old.2 || error_log.end > new.0 {
-                                error_logs.remove(i);
-                                continue;
+                            if old.1 < error_log.start && error_log.end < old.2 {
+                                panic!(
+                                    "The error log {:?} has contradiction on {:?}, {:?}.",
+                                    error_log, old, new
+                                );
+                            } else {
+                                error_logs.pop_front();
                             }
                         }
                     }
                 } else {
-                    // it or later error log cannot be overlapped by the range of the two bunches
-                    // therefore, break and try on next range
                     break;
                 }
-
-                i += 1;
             }
         }
 
@@ -523,44 +507,53 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
         {
             let last_log_bunch = final_log_bunches.last().unwrap();
 
-            let mut i = 0;
-            while i < error_logs.len() {
-                let error_log = &error_logs[i];
-
+            while let Some(error_log) = error_logs.front() {
                 if error_log.start < last_log_bunch.3 {
                     // the error log is overlapped by the range of the bunch
                     match error_log.op {
                         Operation::Insert => {
-                            // insert overlapping first_log_bunch's removing,
-                            // or between first_log_bunch's finishing inserting and starting removing
-                            if (error_log.start < last_log_bunch.3 && error_log.end > last_log_bunch.2)
-                                || (error_log.start < last_log_bunch.2 && error_log.end > last_log_bunch.1)
+                            if last_log_bunch.4.last().unwrap().op == Operation::Remove
+                                && last_log_bunch.3 < error_log.start
                             {
-                                error_logs.remove(i);
+                                panic!(
+                                    "The error log {:?} has contradiction on {:?}.",
+                                    error_log, last_log_bunch
+                                );
+                            } else {
+                                error_logs.pop_front();
                                 continue;
                             }
                         }
                         Operation::Lookup | Operation::Remove => {
-                            if last_log_bunch.4.last().unwrap().op == Operation::Remove
-                                && error_log.end > last_log_bunch.2
+                            if last_log_bunch.1 < error_log.start
+                                && error_log.end < last_log_bunch.2
                             {
-                                // they can be correct if the removal occured, or should be incorrect
-                                error_logs.remove(i);
+                                panic!(
+                                    "The error log {:?} has contradiction on {:?}.",
+                                    error_log, last_log_bunch
+                                );
+                            } else {
+                                error_logs.pop_front();
                                 continue;
                             }
                         }
                     }
                 } else {
-                    // it or later error log cannot be overlapped by the range of the two bunches
-                    // therefore, break and try on next range
                     break;
                 }
-
-                i += 1;
             }
         }
 
-        assert_eq!(error_logs.len(), 0, "Error logs are not fully handled.");
+        // after bunches, all error log should be
+        while let Some(error_log) = error_logs.pop_front() {
+            if !last_flag && error_log.op == Operation::Insert {
+                panic!("Finishing with removal, the error log {:?} has contradiction since it is empty.", error_log);
+            } else if last_flag
+                && (error_log.op == Operation::Lookup || error_log.op == Operation::Remove)
+            {
+                panic!("Finishing without removal, the error log {:?} has contradiction since it is not empty.", error_log);
+            }
+        }
 
         // merge log bunches into single log
         let logs: Vec<Log<K, u64>> = final_log_bunches
