@@ -5,7 +5,6 @@ use crossbeam_epoch::pin;
 use crossbeam_utils::thread;
 use rand::prelude::SliceRandom;
 use rand::prelude::ThreadRng;
-use rand::rngs::mock;
 use rand::thread_rng;
 use rand::Rng;
 use std::collections::BTreeMap;
@@ -299,8 +298,7 @@ where
     assert_logs(logs);
 }
 
-// bug: if the bunch of operations are moved to near future and it causes inconsistency,
-// this alogorithm cannot rearrange well.
+// rearrange logs and check if they are consistent and have no contradiction
 fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
     let mut key_logs = HashMap::new();
 
@@ -331,7 +329,7 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
         let mut last_flag = false;
         for (value, mut logs) in value_logs {
             if value == Err(()) {
-                // Error logs cannot cause side effect. Therefore, collect all in one place and interleave them into correct logs.
+                // Error logs cannot cause side effect. Therefore, collect all in one place and check correctness
                 error_logs = logs;
                 continue;
             }
@@ -379,8 +377,8 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
 
             let insert = logs.first().unwrap();
 
-            // the latest insertion on the key
             if remove.len() == 0 {
+                // the latest insertion on the key
                 if last_flag {
                     println!("Full logs of key: {:?}, value: {:?}", key, value);
                     print_logs(&key_logs);
@@ -398,6 +396,18 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
             }
         }
 
+        if log_bunches.is_empty() {
+            // There are only error logs. Therefore, we just check if the log is lookup(error) or remove(error).
+
+            for error_log in error_logs {
+                if error_log.op == Operation::Insert {
+                    panic!("If there are only error logs, they should be lookup or removal.");
+                }
+            }
+
+            continue;
+        }
+
         // rearrange batches by correctness
         log_bunches.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -411,57 +421,57 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
 
         assert_eq!(before, final_log_bunches.len());
 
+        // check if the error log can be caused as error
+        //
+        // the error of insert: ok when its area is overlapped by the success of insertion or the success of removal
+        //              lookup: ok when its area is overlapped by the success of removal or the success of insertion
+        //              remove: same to the error of lookup
+        error_logs.sort_by(|a, b| a.start.cmp(&b.start));
+
+        for bunches in final_log_bunches.windows(2) {
+            let old = &bunches[0];
+            let new = &bunches[1];
+            let (_, end) = (old.0, new.1); // from starting old insertion to ending new insertion
+
+            let mut i = 0;
+            while i < error_logs.len() {
+                let error_log = &error_logs[i];
+
+                if error_log.start < end {
+                    // the error log is overlapped by the range of the two bunches
+                    match error_log.op {
+                        Operation::Insert => {
+                            if error_log.start < old.1 || error_log.start < old.3 {
+                                error_logs.remove(i);
+                                continue;
+                            }
+                        }
+                        Operation::Lookup | Operation::Remove => {
+                            if error_log.start < old.3 || error_log.start < new.1 {
+                                error_logs.remove(i);
+                                continue;
+                            }
+                        }
+                    }
+                } else {
+                    // it or later error log cannot be overlapped by the range of the two bunches
+                    // therefore, break and try on next range
+                    break;
+                }
+
+                i += 1;
+            }
+        }
+
+        assert_eq!(error_logs.len(), 0, "Error logs are not fully handled.");
+
         // merge log bunches into single log
-        let mut logs: Vec<Log<K, u64>> = final_log_bunches
+        let logs: Vec<Log<K, u64>> = final_log_bunches
             .into_iter()
             .map(|bunch| bunch.4)
             .flatten()
             .collect();
 
-        assert!(verify_logs(logs.iter().collect::<Vec<_>>()));
-
-        // insert error log into correctly rearranged logs
-        error_logs.sort_by(|a, b| a.start.cmp(&b.start));
-
-        // check if error_log[j] can be inserted between logs[i - 1], log[i]
-        // coarse O(n^2) is better?
-        let mut i = 0;
-        loop {
-            let mut j = 0;
-            loop {
-                let mut test_logs = Vec::new();
-
-                if i > 0 {
-                    test_logs.push(&logs[i - 1]);
-                }
-
-                test_logs.push(&error_logs[j]);
-
-                if i < logs.len() {
-                    test_logs.push(&logs[i]);
-                }
-
-                if check_logs(test_logs.clone()) {
-                    println!("Insertion:");
-                    println!("{:?}", test_logs);
-                    logs.insert(i, error_logs.remove(j));
-                    i += 1;
-                } else {
-                    j += 1;
-                }
-
-                if j >= error_logs.len() {
-                    break;
-                }
-            }
-
-            i += 1;
-            if i > logs.len() {
-                break;
-            }
-        }
-
-        assert_eq!(error_logs.len(), 0);
         assert!(verify_logs(logs.iter().collect::<Vec<_>>()));
     }
 }
