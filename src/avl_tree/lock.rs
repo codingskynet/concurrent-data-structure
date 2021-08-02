@@ -5,6 +5,7 @@ use crossbeam_epoch::Owned;
 use crossbeam_epoch::Shared;
 use crossbeam_utils::sync::ShardedLock;
 use crossbeam_utils::sync::ShardedLockReadGuard;
+use std::cmp::max;
 use std::fmt::Debug;
 use std::mem;
 use std::mem::ManuallyDrop;
@@ -39,15 +40,50 @@ impl<K, V> NodeInner<K, V> {
             Dir::Eq => unreachable!(),
         }
     }
+
+    fn renew_height(&mut self, guard: &Guard) {
+        let left = self.left.load(Ordering::Relaxed, guard);
+        let right = self.right.load(Ordering::Relaxed, guard);
+
+        let left_guard = if !left.is_null() {
+            unsafe { Some(left.as_ref().unwrap().inner.read().unwrap()) }
+        } else {
+            None
+        };
+
+        let right_guard = if !right.is_null() {
+            unsafe { Some(right.as_ref().unwrap().inner.read().unwrap())}
+        } else {
+            None
+        };
+
+        let left_height = if let Some(read_guard) = &left_guard {
+            read_guard.height
+        } else {
+            0
+        };
+
+        let right_height = if let Some(read_guard) = &right_guard {
+            read_guard.height
+        } else {
+            0
+        };
+
+        self.height = max(left_height, right_height) + 1;
+    }
 }
 
-impl<K: Default, V: Default> Default for Node<K, V> {
+impl<K, V> Default for Node<K, V>
+where
+    K: Debug + Default,
+    V: Debug + Default,
+{
     fn default() -> Self {
         Self::new(K::default(), V::default())
     }
 }
 
-impl<K, V> Node<K, V> {
+impl<K: Debug, V: Debug> Node<K, V> {
     fn new(key: K, value: V) -> Node<K, V> {
         Node {
             key,
@@ -57,6 +93,86 @@ impl<K, V> Node<K, V> {
                 left: Atomic::null(),
                 right: Atomic::null(),
             }),
+        }
+    }
+
+    /// cleanup moving to ancestor
+    ///
+    /// If the node does not have full childs, delete it and move child to its position.
+    fn try_cleanup(
+        current: Shared<Node<K, V>>,
+        parent: Shared<Node<K, V>>,
+        dir: Dir,
+        guard: &Guard,
+    ) {
+        let parent_ref = unsafe { parent.as_ref().unwrap() };
+
+        let current_ref = unsafe { current.as_ref().unwrap() };
+        let read_guard = current_ref
+            .inner
+            .read()
+            .expect(&format!("Faild to load {:?} read lock", current_ref.key));
+
+        // only already logically removed node can be cleaned up
+        if read_guard.value.is_none() {
+            let (left, right) = (
+                read_guard.left.load(Ordering::Relaxed, guard).is_null(),
+                read_guard.right.load(Ordering::Relaxed, guard).is_null(),
+            );
+
+            // if the node has one or zero node, the node can be directly removed
+            if left || right {
+                drop(read_guard);
+
+                let parent_write_guard = parent_ref
+                    .inner
+                    .write()
+                    .expect(&format!("Faild to load {:?} write lock", parent_ref.key));
+
+                // check if current's parent is even parent now
+                if parent_write_guard
+                    .get_child(dir)
+                    .load(Ordering::Relaxed, guard)
+                    == current
+                {
+                    let write_guard = current_ref
+                        .inner
+                        .write()
+                        .expect(&format!("Faild to load {:?} write lock", current_ref.key));
+
+                    let (left, right) = (
+                        write_guard.left.load(Ordering::Relaxed, guard),
+                        write_guard.right.load(Ordering::Relaxed, guard),
+                    );
+
+                    // re-check if it can be removed
+                    if write_guard.value.is_none() && (left.is_null() || right.is_null()) {
+                        let replace_node = if !left.is_null() {
+                            write_guard
+                                .left
+                                .swap(Shared::null(), Ordering::Relaxed, guard)
+                        } else {
+                            write_guard
+                                .right
+                                .swap(Shared::null(), Ordering::Relaxed, guard)
+                        };
+
+                        let current = parent_write_guard.get_child(dir).swap(
+                            replace_node,
+                            Ordering::Relaxed,
+                            guard,
+                        );
+
+                        drop(parent_write_guard);
+                        drop(write_guard);
+
+                        // request deallocate removed node
+                        unsafe {
+                            guard.defer_destroy(current);
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -140,81 +256,16 @@ where
         }
     }
 
-    /// cleanup moving to ancestor
-    ///
-    /// If the node does not have full childs, delete it and move child to its position.
-    fn cleanup(mut cursor: Cursor<'g, K, V>, guard: &'g Guard) {
+    /// try to cleanup and rebalance the node
+    /// TODO: manage repair operation by unique on current waiting list
+    fn repair(mut cursor: Cursor<'g, K, V>, guard: &'g Guard) {
         while let Some((parent, dir)) = cursor.ancestors.pop() {
-            let parent_ref = unsafe { parent.as_ref().unwrap() };
+            Node::try_cleanup(cursor.current, parent, dir, guard);
 
-            let current = cursor.current;
-            let current_ref = unsafe { current.as_ref().unwrap() };
-            let read_guard = current_ref
-                .inner
-                .read()
-                .expect(&format!("Faild to load {:?} read lock", current_ref.key));
+            // TODO: Node::try_rebalance(current, (parent, dir), (grand_parent, dir), guard)
 
-            // only already logically removed node can be cleaned up
-            if read_guard.value.is_none() {
-                let (left, right) = (
-                    read_guard.left.load(Ordering::Relaxed, guard).is_null(),
-                    read_guard.right.load(Ordering::Relaxed, guard).is_null(),
-                );
-
-                // if the node has one or zero node, the node can be directly removed
-                if left || right {
-                    drop(read_guard);
-
-                    let parent_write_guard = parent_ref
-                        .inner
-                        .write()
-                        .expect(&format!("Faild to load {:?} write lock", parent_ref.key));
-
-                    // check if current's parent is even parent now
-                    if parent_write_guard
-                        .get_child(dir)
-                        .load(Ordering::Relaxed, guard)
-                        == current
-                    {
-                        let write_guard = current_ref
-                            .inner
-                            .write()
-                            .expect(&format!("Faild to load {:?} write lock", current_ref.key));
-
-                        let (left, right) = (
-                            write_guard.left.load(Ordering::Relaxed, guard),
-                            write_guard.right.load(Ordering::Relaxed, guard),
-                        );
-
-                        // re-check if it can be removed
-                        if write_guard.value.is_none() && (left.is_null() || right.is_null()) {
-                            let replace_node = if !left.is_null() {
-                                write_guard
-                                    .left
-                                    .swap(Shared::null(), Ordering::Relaxed, guard)
-                            } else {
-                                write_guard
-                                    .right
-                                    .swap(Shared::null(), Ordering::Relaxed, guard)
-                            };
-
-                            let current = parent_write_guard.get_child(dir).swap(
-                                replace_node,
-                                Ordering::Relaxed,
-                                guard,
-                            );
-
-                            drop(parent_write_guard);
-                            drop(write_guard);
-
-                            // request deallocate removed node
-                            unsafe {
-                                guard.defer_destroy(current);
-                            }
-                        }
-                    }
-                }
-            }
+            let current_ref = unsafe { cursor.current.as_ref().unwrap() };
+            current_ref.inner.write().unwrap().renew_height(guard);
 
             cursor.current = parent;
         }
@@ -400,10 +451,10 @@ where
                 }
             }
 
-            // unsafe {
-            //     cursor.current.as_mut().renew_height();
-            // }
-            // cursor.rebalance();
+            drop(write_guard);
+            drop(parent_read_guard);
+
+            Cursor::repair(cursor, guard);
 
             return Ok(());
         }
@@ -444,7 +495,7 @@ where
         let value = write_guard.value.take().unwrap();
         drop(write_guard);
 
-        Cursor::cleanup(cursor, guard);
+        Cursor::repair(cursor, guard);
 
         Ok(value)
     }
