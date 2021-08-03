@@ -213,7 +213,11 @@ fn print_logs<K: Debug>(logs: &Vec<Log<K, u64>>) {
     }
 }
 
-pub fn stress_concurrent<K, M>(iter: u64, thread_num: u64)
+/// stress and assert on the concurrent model
+///
+/// Since asserting logs is based on recursion,
+/// I recommend to use at most stress_concurrent(100_000, 32) on 8KiB stack memory.
+pub fn stress_concurrent<K, M>(iter: u64, thread_num: u64, assert_log: bool)
 where
     K: Send + Ord + Clone + Random + Debug + Hash,
     M: Sync + ConcurrentMap<K, u64>,
@@ -231,8 +235,6 @@ where
                 let mut logs = Vec::new();
 
                 for _ in 0..iter {
-                    let pin = pin();
-
                     let key = K::gen(&mut rng);
                     let op = ops.choose(&mut rng).unwrap().clone();
 
@@ -240,7 +242,7 @@ where
                         Operation::Insert => {
                             let value = u64::gen(&mut rng);
                             let start = Instant::now();
-                            let result = match map.insert(&key, value, &pin) {
+                            let result = match map.insert(&key, value, &pin()) {
                                 Ok(()) => Ok(value),
                                 Err(_) => Err(()),
                             };
@@ -250,7 +252,7 @@ where
                         }
                         Operation::Lookup => {
                             let start = Instant::now();
-                            let result = match map.lookup(&key, &pin) {
+                            let result = match map.lookup(&key, &pin()) {
                                 Some(value) => Ok(value),
                                 None => Err(()),
                             };
@@ -260,7 +262,7 @@ where
                         }
                         Operation::Remove => {
                             let start = Instant::now();
-                            let result = map.remove(&key, &pin);
+                            let result = map.remove(&key, &pin());
                             let end = Instant::now();
 
                             (start, result, end)
@@ -278,7 +280,6 @@ where
                     // println!("{:?} [{:0>10}] {:?}", std::thread::current().id(), i, log);
 
                     logs.push(log);
-                    drop(pin);
                 }
 
                 logs
@@ -295,7 +296,9 @@ where
     })
     .unwrap();
 
-    assert_logs(logs);
+    if assert_log {
+        assert_logs(logs);
+    }
 }
 
 // rearrange logs and check if they are consistent and have no contradiction

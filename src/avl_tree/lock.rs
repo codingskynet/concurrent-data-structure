@@ -52,7 +52,7 @@ impl<K, V> NodeInner<K, V> {
         };
 
         let right_guard = if !right.is_null() {
-            unsafe { Some(right.as_ref().unwrap().inner.read().unwrap())}
+            unsafe { Some(right.as_ref().unwrap().inner.read().unwrap()) }
         } else {
             None
         };
@@ -99,12 +99,13 @@ impl<K: Debug, V: Debug> Node<K, V> {
     /// cleanup moving to ancestor
     ///
     /// If the node does not have full childs, delete it and move child to its position.
+    /// If successing to defer_destroy it, return true else false.
     fn try_cleanup(
         current: Shared<Node<K, V>>,
         parent: Shared<Node<K, V>>,
         dir: Dir,
         guard: &Guard,
-    ) {
+    ) -> bool {
         let parent_ref = unsafe { parent.as_ref().unwrap() };
 
         let current_ref = unsafe { current.as_ref().unwrap() };
@@ -170,10 +171,25 @@ impl<K: Debug, V: Debug> Node<K, V> {
                         unsafe {
                             guard.defer_destroy(current);
                         }
+
+                        return true;
                     }
                 }
             }
         }
+
+        false
+    }
+
+    /// rebalance from current to grand_parent
+    ///
+    /// If the relation among the nodes is not changed and the heights are needed to rotate, do it.
+    fn try_rebalance(
+        current: Shared<Node<K, V>>,
+        (parent, parent_dir): (Shared<Node<K, V>>, Dir),
+        (grand_parent, grand_parent_dir): &(Shared<Node<K, V>>, Dir),
+        guard: &Guard,
+    ) {
     }
 }
 
@@ -260,12 +276,17 @@ where
     /// TODO: manage repair operation by unique on current waiting list
     fn repair(mut cursor: Cursor<'g, K, V>, guard: &'g Guard) {
         while let Some((parent, dir)) = cursor.ancestors.pop() {
-            Node::try_cleanup(cursor.current, parent, dir, guard);
-
-            // TODO: Node::try_rebalance(current, (parent, dir), (grand_parent, dir), guard)
-
-            let current_ref = unsafe { cursor.current.as_ref().unwrap() };
-            current_ref.inner.write().unwrap().renew_height(guard);
+            if !Node::try_cleanup(cursor.current, parent, dir, guard) {
+                // the cursor.current is alive, so try rebalancing
+                if let Some(grand_parent) = cursor.ancestors.last() {
+                    Node::try_rebalance(cursor.current, (parent, dir), grand_parent, guard);
+                } else {
+                    // it means that the parent is RwLockAVLTree.root
+                    // So, just renew the height of current
+                    let current_ref = unsafe { cursor.current.as_ref().unwrap() };
+                    current_ref.inner.write().unwrap().renew_height(guard);
+                }
+            }
 
             cursor.current = parent;
         }

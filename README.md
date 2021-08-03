@@ -5,8 +5,8 @@ Implement sequential, lock-based and lock-free concurrent data structures below:
 
 |            | Stack | Queue | Linked List | AVL Tree | Red-Black Tree |
 |------------|-------|-------|-------------|----------|----------------|
-| Sequential |   O   |   O   |      O      |     O    |                |
-| Lock-based |       |       |             |          |                |
+| Sequential | Done  | Done  |    Done     |   Done   |                |
+| Lock-based |       |       |             |  Doing   |                |
 | Lock-free  |       |       |             |          |                |
 
 ## Detail
