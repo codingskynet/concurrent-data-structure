@@ -656,8 +656,6 @@ fn verify_logs<K: Debug, V: Clone + Debug + PartialEq>(logs: Vec<&Log<K, V>>) ->
             if let Ok(new_state) = verify_state_log(state, &log) {
                 state = new_state;
                 old_log = log;
-
-                continue;
             } else {
                 // The log has contradition on data
                 return false;
