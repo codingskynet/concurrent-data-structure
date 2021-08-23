@@ -6,7 +6,7 @@ Implement sequential, lock-based and lock-free concurrent data structures below:
 |            | Stack | Queue | Linked List | AVL Tree | Red-Black Tree |
 |------------|-------|-------|-------------|----------|----------------|
 | Sequential | Done  | Done  |    Done     |   Done   |                |
-| Lock-based |       |       |             |  Doing   |                |
+| Lock-based |       |       |             |   Done   |                |
 | Lock-free  |       |       |             |          |                |
 
 ## Detail
@@ -20,7 +20,7 @@ TODO: implement Michael-Scott queue
 TODO: implement Harris linked list
 
 ### AVL Tree
-TODO: ?
+- Implement simple concurrent AVL Tree with RwLock(crossbeam_utils::sync::ShardedLock)
 
 ### Red-Black Tree
 TODO: ?
