@@ -5,26 +5,29 @@ use crate::util::map::{stress_concurrent, stress_concurrent_as_sequential};
 
 #[test]
 fn test_rwlock_avl_tree() {
+    let num = 64;
     let pin = pin();
     let avl: RwLockAVLTree<i32, i32> = RwLockAVLTree::new();
 
-    for i in 0..100 {
+    for i in 0..num {
         assert_eq!(avl.insert(&i, i, &pin), Ok(()));
     }
 
-    for i in 0..100 {
+    for i in 0..num {
         assert_eq!(avl.insert(&i, i, &pin), Err(i));
     }
 
-    for i in 0..100 {
+    assert_eq!(avl.get_height(&pin), f32::log2(num as f32) as usize + 1);
+
+    for i in 0..num {
         assert_eq!(avl.lookup(&i, &pin), Some(i));
     }
 
-    for i in 0..100 {
+    for i in 0..num {
         assert_eq!(avl.remove(&i, &pin), Ok(i));
     }
 
-    for i in 0..100 {
+    for i in 0..num {
         assert_eq!(avl.remove(&i, &pin), Err(()));
     }
 }
