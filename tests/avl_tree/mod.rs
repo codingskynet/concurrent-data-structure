@@ -1,4 +1,4 @@
-mod lock;
+mod rwlock;
 
 use std::{collections::BTreeMap, time::Instant};
 
@@ -91,6 +91,7 @@ fn bench_large_tree() {
         let _ = avl.insert(&key, key);
     }
     println!("AVL {} Insert: {} ms", iter, start.elapsed().as_millis());
+    println!("AVL height: {}", avl.get_height());
 
     let start = Instant::now();
     for _ in 0..iter {

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use cds::{avl_tree::lock::RwLockAVLTree, map::ConcurrentMap};
+use cds::{avl_tree::rwlock::RwLockAVLTree, map::ConcurrentMap};
 use crossbeam_epoch::pin;
 use crossbeam_utils::thread;
 use rand::{thread_rng, Rng};
@@ -85,6 +85,7 @@ fn bench_large_rwlock_avl_tree() {
         thread_num * iter,
         start.elapsed().as_millis()
     );
+    println!("RwLockAVL height: {}", avl.get_height(&pin()));
 
     let start = Instant::now();
     let _ = thread::scope(|s| {
