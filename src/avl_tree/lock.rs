@@ -250,6 +250,11 @@ impl<K: Debug, V: Debug> Node<K, V> {
         let mut current: Shared<Node<K, V>>;
         let mut current_guard: ShardedLockWriteGuard<NodeInner<K, V>>;
 
+        if !root_guard.is_same_child(*root_dir, parent, guard) {
+            // The parent is separated from root between parent's read and write guard
+            return;
+        }
+
         if parent_guard.get_factor(guard) <= -2 {
             // R* rotation
             current = parent_guard.right.load(Ordering::Relaxed, guard);
