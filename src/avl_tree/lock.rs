@@ -245,15 +245,16 @@ impl<K: Debug, V: Debug> Node<K, V> {
         drop(parent_guard);
 
         let root_guard = unsafe { root.as_ref().unwrap().inner.write().unwrap() };
-        let parent_ref = unsafe { parent.as_ref().unwrap() };
-        let parent_guard = parent_ref.inner.write().unwrap();
-        let mut current: Shared<Node<K, V>>;
-        let mut current_guard: ShardedLockWriteGuard<NodeInner<K, V>>;
 
         if !root_guard.is_same_child(*root_dir, parent, guard) {
             // The parent is separated from root between parent's read and write guard
             return;
         }
+
+        let parent_ref = unsafe { parent.as_ref().unwrap() };
+        let parent_guard = parent_ref.inner.write().unwrap();
+        let mut current: Shared<Node<K, V>>;
+        let mut current_guard: ShardedLockWriteGuard<NodeInner<K, V>>;
 
         if parent_guard.get_factor(guard) <= -2 {
             // R* rotation
