@@ -5,6 +5,7 @@ use crossbeam_epoch::Owned;
 use crossbeam_epoch::Shared;
 use crossbeam_utils::sync::ShardedLock;
 use crossbeam_utils::sync::ShardedLockReadGuard;
+use crossbeam_utils::sync::ShardedLockWriteGuard;
 use std::cmp::max;
 use std::fmt::Debug;
 use std::mem;
@@ -64,6 +65,25 @@ impl<K, V> NodeInner<K, V> {
 
         left_height - right_height
     }
+
+    fn get_new_height(&self, guard: &Guard) -> isize {
+        let left = self.left.load(Ordering::Relaxed, guard);
+        let right = self.right.load(Ordering::Relaxed, guard);
+
+        let left = if !left.is_null() {
+            unsafe { left.as_ref().unwrap().height.load(Ordering::Acquire) }
+        } else {
+            0
+        };
+
+        let right = if !right.is_null() {
+            unsafe { right.as_ref().unwrap().height.load(Ordering::Acquire) }
+        } else {
+            0
+        };
+
+        max(left, right) + 1
+    }
 }
 
 impl<K, V> Default for Node<K, V>
@@ -89,25 +109,42 @@ impl<K: Debug, V: Debug> Node<K, V> {
         }
     }
 
-    fn renew_height(&self, guard: &Guard) {
-        let inner = self.inner.read().unwrap();
+    /// rotate left the node
+    ///
+    /// Change Parent-Right Child to Left Child-Parent, then return new parent(old right child).
+    /// For simple managing locks, the function does not call lock, only use given lock guards.
+    fn rotate_left<'g>(
+        current: Shared<Node<K, V>>,
+        current_guard: &ShardedLockWriteGuard<NodeInner<K, V>>,
+        right_child_guard: &ShardedLockWriteGuard<NodeInner<K, V>>,
+        guard: &'g Guard,
+    ) -> Shared<'g, Node<K, V>> {
+        let right_child_left_child = right_child_guard.left.load(Ordering::Relaxed, guard);
+        let new_parent = current_guard
+            .right
+            .swap(right_child_left_child, Ordering::Relaxed, guard);
+        right_child_guard.left.store(current, Ordering::Relaxed);
 
-        let left = inner.left.load(Ordering::Relaxed, guard);
-        let right = inner.right.load(Ordering::Relaxed, guard);
+        new_parent
+    }
 
-        let left = if !left.is_null() {
-            unsafe { left.as_ref().unwrap().height.load(Ordering::Acquire) }
-        } else {
-            0
-        };
+    /// rotate right the node
+    ///
+    /// Change Left Child-Parent to Parent-Right Child, then return new parent(old left child).
+    /// For simple managing locks, the function does not call lock, only use given lock guards.
+    fn rotate_right<'g>(
+        current: Shared<Node<K, V>>,
+        current_guard: &ShardedLockWriteGuard<NodeInner<K, V>>,
+        left_child_guard: &ShardedLockWriteGuard<NodeInner<K, V>>,
+        guard: &'g Guard,
+    ) -> Shared<'g, Node<K, V>> {
+        let left_child_right_child = left_child_guard.right.load(Ordering::Relaxed, guard);
+        let new_parent = current_guard
+            .left
+            .swap(left_child_right_child, Ordering::Relaxed, guard);
+        left_child_guard.right.store(current, Ordering::Relaxed);
 
-        let right = if !right.is_null() {
-            unsafe { right.as_ref().unwrap().height.load(Ordering::Acquire) }
-        } else {
-            0
-        };
-
-        self.height.store(max(left, right) + 1, Ordering::Release);
+        new_parent
     }
 
     /// cleanup moving to ancestor
@@ -194,56 +231,106 @@ impl<K: Debug, V: Debug> Node<K, V> {
     /// rebalance from current to grand_parent and renew all changed nodes
     ///
     /// If the relation among the nodes is not changed and the heights are needed to rotate, do it.
-    fn try_rebalance(
-        current: Shared<Node<K, V>>,
+    fn try_rebalance<'g>(
+        mut current: Shared<'g, Node<K, V>>,
         (parent, parent_dir): (Shared<Node<K, V>>, Dir),
         (root, root_dir): &(Shared<Node<K, V>>, Dir), // if rotating, root's child pointer should be rewritten
-        guard: &Guard,
+        guard: &'g Guard,
     ) {
         let parent_guard = unsafe { parent.as_ref().unwrap().inner.read().unwrap() };
 
-        match parent_guard.get_factor(guard) {
-            f if f <= -2 => {
-                // R* rotation
-                let root_guard = unsafe { root.as_ref().unwrap().inner.write().unwrap() };
-                let parent_guard = unsafe { parent.as_ref().unwrap().inner.write().unwrap() };
-                let current_guard = unsafe { current.as_ref().unwrap().inner.write().unwrap() };
+        let factor = parent_guard.get_factor(guard);
 
-                // recheck the structure is valid now before really rotation(write)
-                if parent_guard.get_factor(guard) <= -2
-                    && root_guard.is_same_child(*root_dir, parent, guard)
-                    && parent_guard.is_same_child(parent_dir, current, guard)
-                {
-                    if current_guard.get_factor(guard) > 0 {
-                        // RL rotation
-                    } else {
-                        // RR rotation
-                    }
-                }
-            }
-            f if f >= 2 => {
-                // L* rotation
-                let root_guard = unsafe { root.as_ref().unwrap().inner.write().unwrap() };
-                let parent_guard = unsafe { parent.as_ref().unwrap().inner.write().unwrap() };
-                let current_guard = unsafe { current.as_ref().unwrap().inner.write().unwrap() };
-
-                // recheck the structure is valid now before really rotation(write)
-                if parent_guard.get_factor(guard) >= 2
-                    && root_guard.is_same_child(*root_dir, parent, guard)
-                    && parent_guard.is_same_child(parent_dir, current, guard)
-                {
-                    if current_guard.get_factor(guard) < 0 {
-                        // LR rotation
-                    } else {
-                        // LL rotation
-                    }
-                }
-            }
-            _ => {} // not need to rotate
+        if (-1..=1).contains(&factor) {
+            return;
         }
 
-        let current_ref = unsafe { current.as_ref().unwrap() };
-        current_ref.renew_height(guard);
+        drop(parent_guard);
+
+        let root_guard = unsafe { root.as_ref().unwrap().inner.write().unwrap() };
+        let parent_guard = unsafe { parent.as_ref().unwrap().inner.write().unwrap() };
+        let mut current_guard = unsafe { current.as_ref().unwrap().inner.write().unwrap() };
+
+        if factor <= -2 {
+            // R* rotation
+
+            // recheck the structure is valid now before really rotation(write)
+            if parent_guard.get_factor(guard) <= -2
+                && root_guard.is_same_child(*root_dir, parent, guard)
+                && parent_guard.is_same_child(parent_dir, current, guard)
+            {
+                if current_guard.get_factor(guard) > 0 {
+                    // RL rotation
+                    let left_child = current_guard.left.load(Ordering::Relaxed, guard);
+
+                    let left_child_guard =
+                        unsafe { left_child.as_ref().unwrap().inner.write().unwrap() };
+
+                    parent_guard.right.store(
+                        Node::rotate_right(current, &current_guard, &left_child_guard, guard),
+                        Ordering::Relaxed,
+                    );
+
+                    unsafe { current.as_ref().unwrap().height.store(current_guard.get_new_height(guard), Ordering::Release) };
+
+                    root_guard.get_child(*root_dir).store(
+                        Node::rotate_left(parent, &parent_guard, &left_child_guard, guard),
+                        Ordering::Relaxed,
+                    );
+
+                    current = left_child;
+                    current_guard = left_child_guard;
+                } else {
+                    // RR rotation
+                    root_guard.get_child(*root_dir).store(
+                        Node::rotate_left(parent, &parent_guard, &current_guard, guard),
+                        Ordering::Relaxed,
+                    );
+                }
+            }
+        } else if factor >= 2 {
+            // L* rotation
+
+            // recheck the structure is valid now before really rotation(write)
+            if parent_guard.get_factor(guard) >= 2
+                && root_guard.is_same_child(*root_dir, parent, guard)
+                && parent_guard.is_same_child(parent_dir, current, guard)
+            {
+                if current_guard.get_factor(guard) < 0 {
+                    // LR rotation
+                    let right_child = current_guard.right.load(Ordering::Relaxed, guard);
+
+                    let right_child_guard =
+                        unsafe { right_child.as_ref().unwrap().inner.write().unwrap() };
+
+                    parent_guard.left.store(
+                        Node::rotate_left(current, &current_guard, &right_child_guard, guard),
+                        Ordering::Relaxed,
+                    );
+
+                    unsafe { current.as_ref().unwrap().height.store(current_guard.get_new_height(guard), Ordering::Release) };
+
+                    root_guard.get_child(*root_dir).store(
+                        Node::rotate_right(parent, &parent_guard, &right_child_guard, guard),
+                        Ordering::Relaxed,
+                    );
+
+                    current = right_child;
+                    current_guard = right_child_guard;
+                } else {
+                    // LL rotation
+                    root_guard.get_child(*root_dir).store(
+                        Node::rotate_right(parent, &parent_guard, &current_guard, guard),
+                        Ordering::Relaxed,
+                    );
+                }
+            }
+        }
+
+        unsafe {
+            parent.as_ref().unwrap().height.store(parent_guard.get_new_height(guard), Ordering::Release);
+            current.as_ref().unwrap().height.store(current_guard.get_new_height(guard), Ordering::Release);
+        }
     }
 }
 
@@ -331,14 +418,16 @@ where
     fn repair(mut cursor: Cursor<'g, K, V>, guard: &'g Guard) {
         while let Some((parent, dir)) = cursor.ancestors.pop() {
             if !Node::try_cleanup(cursor.current, parent, dir, guard) {
+                {
+                    let current = unsafe { cursor.current.as_ref().unwrap() };
+                    let current_guard = current.inner.read().unwrap();
+
+                    current.height.store(current_guard.get_new_height(guard), Ordering::Release);
+                }
+
                 // the cursor.current is alive, so try rebalancing
                 if let Some(root_pair) = cursor.ancestors.last() {
                     Node::try_rebalance(cursor.current, (parent, dir), root_pair, guard);
-                } else {
-                    // It means that the grand_parent is RwLockAVLTree.root.
-                    // So, just renew the height of current.
-                    let current_ref = unsafe { cursor.current.as_ref().unwrap() };
-                    current_ref.renew_height(guard);
                 }
             }
 
@@ -479,8 +568,7 @@ where
             };
 
             if let Some((parent_read_guard, dir)) = &parent_read_guard {
-                if !parent_read_guard.is_same_child(**dir, cursor.current, guard)
-                {
+                if !parent_read_guard.is_same_child(**dir, cursor.current, guard) {
                     // Before inserting, the current is already disconnected.
                     continue;
                 }
