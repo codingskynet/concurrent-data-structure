@@ -31,3 +31,4 @@ TODO: ?
 - https://stanford-ppl.github.io/website/papers/ppopp207-bronson.pdf
 - https://www.cs.tau.ac.il/~shanir/concurrent-data-structures.pdf
 - http://www.vldb.org/pvldb/vol4/p795-sewall.pdf
+- https://www.cs.umanitoba.ca/~hacamero/Research/RBTreesKim.pdf

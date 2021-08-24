@@ -160,10 +160,7 @@ impl<K: Debug, V: Debug> Node<K, V> {
         let parent_ref = unsafe { parent.as_ref().unwrap() };
 
         let current_ref = unsafe { current.as_ref().unwrap() };
-        let read_guard = current_ref
-            .inner
-            .read()
-            .unwrap();
+        let read_guard = current_ref.inner.read().unwrap();
 
         // only already logically removed node can be cleaned up
         if read_guard.value.is_none() {
@@ -176,17 +173,11 @@ impl<K: Debug, V: Debug> Node<K, V> {
             if left || right {
                 drop(read_guard);
 
-                let parent_write_guard = parent_ref
-                    .inner
-                    .write()
-                    .unwrap();
+                let parent_write_guard = parent_ref.inner.write().unwrap();
 
                 // check if current's parent is even parent now
                 if parent_write_guard.is_same_child(dir, current, guard) {
-                    let write_guard = current_ref
-                        .inner
-                        .write()
-                        .unwrap();
+                    let write_guard = current_ref.inner.write().unwrap();
 
                     let (left, right) = (
                         write_guard.left.load(Ordering::Relaxed, guard),
@@ -369,13 +360,7 @@ where
 {
     fn new(tree: &RwLockAVLTree<K, V>, guard: &'g Guard) -> Cursor<'g, K, V> {
         let root = tree.root.load(Ordering::Relaxed, guard);
-        let inner_guard = unsafe {
-            root.as_ref()
-                .unwrap()
-                .inner
-                .read()
-                .unwrap()
-        };
+        let inner_guard = unsafe { root.as_ref().unwrap().inner.read().unwrap() };
 
         let cursor = Cursor {
             ancestors: vec![],
@@ -409,10 +394,7 @@ where
         };
 
         let next_node = unsafe { next.as_ref().unwrap() };
-        let next_guard = next_node
-            .inner
-            .read()
-            .unwrap();
+        let next_guard = next_node.inner.read().unwrap();
 
         let parent = mem::replace(&mut self.current, next);
         self.ancestors.push((parent, self.dir));
@@ -548,50 +530,33 @@ where
         loop {
             let mut cursor = self.find(key, guard);
 
-            if cursor.dir == Dir::Eq && cursor.inner_guard.value.is_some() {
-                unsafe {
-                    ManuallyDrop::drop(&mut cursor.inner_guard);
-                }
-
-                let node_inner = node
-                    .inner
-                    .into_inner()
-                    .unwrap();
-                return Err(node_inner.value.unwrap());
-            }
-
-            let current = unsafe { cursor.current.as_ref().unwrap() };
-
             // unlock read lock and lock write lock... very inefficient, need upgrade from read lock to write lock
             unsafe {
                 ManuallyDrop::drop(&mut cursor.inner_guard);
             }
 
+            if cursor.dir == Dir::Eq && cursor.inner_guard.value.is_some() {
+                let node_inner = node.inner.into_inner().unwrap();
+                return Err(node_inner.value.unwrap());
+            }
+
+            let current = unsafe { cursor.current.as_ref().unwrap() };
+
             // check if the current is alive now by checking parent node. If disconnected, retry
             let parent_read_guard = if let Some((parent, dir)) = cursor.ancestors.last() {
-                let parent = unsafe { parent.as_ref().unwrap() };
-                Some((
-                    parent
-                        .inner
-                        .read()
-                        .unwrap(),
-                    dir,
-                ))
+                let parent_read_guard = unsafe { parent.as_ref().unwrap().inner.read().unwrap() };
+                if !parent_read_guard.is_same_child(*dir, cursor.current, guard) {
+                    // Before inserting, the current is already disconnected.
+                    continue;
+                }
+                Some(parent_read_guard)
             } else {
                 None
             };
 
-            if let Some((parent_read_guard, dir)) = &parent_read_guard {
-                if !parent_read_guard.is_same_child(**dir, cursor.current, guard) {
-                    // Before inserting, the current is already disconnected.
-                    continue;
-                }
-            }
+            let mut write_guard = current.inner.write().unwrap();
 
-            let mut write_guard = current
-                .inner
-                .write()
-                .unwrap();
+            drop(parent_read_guard);
 
             match cursor.dir {
                 Dir::Left => {
@@ -609,12 +574,7 @@ where
                     write_guard.right.store(Owned::new(node), Ordering::Relaxed);
                 }
                 Dir::Eq => {
-                    let value = node
-                        .inner
-                        .into_inner()
-                        .unwrap()
-                        .value
-                        .unwrap();
+                    let value = node.inner.into_inner().unwrap().value.unwrap();
 
                     if write_guard.value.is_some() {
                         return Err(value);
@@ -625,7 +585,6 @@ where
             }
 
             drop(write_guard);
-            drop(parent_read_guard);
 
             Cursor::repair(cursor, guard);
 
@@ -656,10 +615,7 @@ where
         }
 
         // unlock read lock and lock write lock... very inefficient, need upgrade from read lock to write lock
-        let mut write_guard = current
-            .inner
-            .write()
-            .unwrap();
+        let mut write_guard = current.inner.write().unwrap();
 
         if write_guard.value.is_none() {
             return Err(());

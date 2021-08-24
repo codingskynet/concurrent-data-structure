@@ -1,3 +1,5 @@
+mod lockfree;
+
 use std::mem;
 
 // simple sequential stack
