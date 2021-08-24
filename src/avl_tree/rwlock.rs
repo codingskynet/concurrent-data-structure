@@ -163,7 +163,7 @@ impl<K: Debug, V: Debug> Node<K, V> {
         let read_guard = current_ref
             .inner
             .read()
-            .expect(&format!("Faild to load {:?} read lock", current_ref.key));
+            .unwrap();
 
         // only already logically removed node can be cleaned up
         if read_guard.value.is_none() {
@@ -179,14 +179,14 @@ impl<K: Debug, V: Debug> Node<K, V> {
                 let parent_write_guard = parent_ref
                     .inner
                     .write()
-                    .expect(&format!("Faild to load {:?} write lock", parent_ref.key));
+                    .unwrap();
 
                 // check if current's parent is even parent now
                 if parent_write_guard.is_same_child(dir, current, guard) {
                     let write_guard = current_ref
                         .inner
                         .write()
-                        .expect(&format!("Faild to load {:?} write lock", current_ref.key));
+                        .unwrap();
 
                     let (left, right) = (
                         write_guard.left.load(Ordering::Relaxed, guard),
@@ -374,7 +374,7 @@ where
                 .unwrap()
                 .inner
                 .read()
-                .expect("Failed to load root read lock")
+                .unwrap()
         };
 
         let cursor = Cursor {
@@ -412,7 +412,7 @@ where
         let next_guard = next_node
             .inner
             .read()
-            .expect(&format!("Failed to load {:?} read lock", next_node.key));
+            .unwrap();
 
         let parent = mem::replace(&mut self.current, next);
         self.ancestors.push((parent, self.dir));
@@ -496,7 +496,7 @@ where
                 .unwrap()
                 .inner
                 .read()
-                .expect("Failed to load root read lock")
+                .unwrap()
                 .right
                 .load(Ordering::Relaxed, guard)
                 .as_ref()
@@ -556,7 +556,7 @@ where
                 let node_inner = node
                     .inner
                     .into_inner()
-                    .expect("Failed to get data from node");
+                    .unwrap();
                 return Err(node_inner.value.unwrap());
             }
 
@@ -574,7 +574,7 @@ where
                     parent
                         .inner
                         .read()
-                        .expect(&format!("Failed to load {:?} read lock", parent.key)),
+                        .unwrap(),
                     dir,
                 ))
             } else {
@@ -591,7 +591,7 @@ where
             let mut write_guard = current
                 .inner
                 .write()
-                .expect(&format!("Failed to load {:?} write lock", current.key));
+                .unwrap();
 
             match cursor.dir {
                 Dir::Left => {
@@ -612,7 +612,7 @@ where
                     let value = node
                         .inner
                         .into_inner()
-                        .expect("Failed to get data from node")
+                        .unwrap()
                         .value
                         .unwrap();
 
@@ -659,7 +659,7 @@ where
         let mut write_guard = current
             .inner
             .write()
-            .expect(&format!("Failed to load {:?} write lock", current.key));
+            .unwrap();
 
         if write_guard.value.is_none() {
             return Err(());
