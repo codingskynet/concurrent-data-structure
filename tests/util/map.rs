@@ -297,6 +297,7 @@ where
     .unwrap();
 
     if assert_log {
+        println!("Asserting logs...");
         assert_logs(logs);
     }
 }
