@@ -21,7 +21,7 @@ fn test_seqlock_avl_tree() {
         assert_eq!(avl.insert(&i, i, &pin), Err(i));
     }
 
-    // assert_eq!(avl.get_height(&pin), f32::log2(num as f32) as usize + 1);
+    assert_eq!(avl.get_height(&pin), f32::log2(num as f32) as usize + 1);
 
     for i in 0..num {
         assert_eq!(avl.lookup(&i, &pin), Some(i));
@@ -81,11 +81,11 @@ fn bench_large_seqlock_avl_tree() {
             .collect::<Vec<_>>()
     });
     println!(
-        "RwLockAVL {} Insert: {} ms",
+        "SeqLockAVL {} Insert: {} ms",
         thread_num * iter,
         start.elapsed().as_millis()
     );
-    println!("RwLockAVL height: {}", avl.get_height(&pin()));
+    println!("SeqLockAVL height: {}", avl.get_height(&pin()));
 
     let start = Instant::now();
     let _ = thread::scope(|s| {
@@ -110,7 +110,7 @@ fn bench_large_seqlock_avl_tree() {
             .collect::<Vec<_>>()
     });
     println!(
-        "RwLockAVL {} Lookup(50% success): {} ms",
+        "SeqLockAVL {} Lookup(50% success): {} ms",
         thread_num * iter,
         start.elapsed().as_millis()
     );
@@ -138,7 +138,7 @@ fn bench_large_seqlock_avl_tree() {
             .collect::<Vec<_>>()
     });
     println!(
-        "RwLockAVL {} Remove(50% success): {} ms",
+        "SeqLockAVL {} Remove(50% success): {} ms",
         thread_num * iter,
         start.elapsed().as_millis()
     );

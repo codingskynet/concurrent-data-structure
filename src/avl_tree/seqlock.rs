@@ -216,24 +216,19 @@ impl<K: Debug, V: Debug> Node<K, V> {
         false
     }
 
-    /*
     /// rebalance from current to grand_parent and renew all changed nodes
     ///
     /// If the relation among the nodes is not changed and the heights are needed to rotate, do it.
     fn try_rebalance<'g>(
-        parent: Shared<Node<K, V>>,
-        (root, root_dir): &(Shared<Node<K, V>>, Dir), // if rotating, root's child pointer should be rewritten
+        (parent, parent_read_guard): (Shared<Node<K, V>>, ReadGuard<NodeInner<K, V>>),
+        (root, _, root_dir): &(Shared<Node<K, V>>, ReadGuard<NodeInner<K, V>>, Dir), // if rotating, root's child pointer should be rewritten
         guard: &'g Guard,
     ) {
-        let parent_guard = unsafe { parent.as_ref().unwrap().inner.read().unwrap() };
-
-        if (-1..=1).contains(&parent_guard.get_factor(guard)) {
+        if (-1..=1).contains(&parent_read_guard.get_factor(guard)) {
             return;
         }
 
-        drop(parent_guard);
-
-        let root_guard = unsafe { root.as_ref().unwrap().inner.write().unwrap() };
+        let root_guard = unsafe { root.as_ref().unwrap().inner.write_lock() };
 
         if !root_guard.is_same_child(*root_dir, parent, guard) {
             // The parent is separated from root between parent's read and write guard
@@ -241,7 +236,7 @@ impl<K: Debug, V: Debug> Node<K, V> {
         }
 
         let parent_ref = unsafe { parent.as_ref().unwrap() };
-        let parent_guard = parent_ref.inner.write().unwrap();
+        let parent_guard = parent_ref.inner.write_lock();
         let mut current: Shared<Node<K, V>>;
         let mut current_guard: WriteGuard<NodeInner<K, V>>;
 
@@ -249,14 +244,14 @@ impl<K: Debug, V: Debug> Node<K, V> {
             // R* rotation
             current = parent_guard.right.load(Ordering::Relaxed, guard);
             let current_ref = unsafe { current.as_ref().unwrap() };
-            current_guard = current_ref.inner.write().unwrap();
+            current_guard = current_ref.inner.write_lock();
 
             if current_guard.get_factor(guard) > 0 {
                 // partial RL rotation
                 let left_child = current_guard.left.load(Ordering::Relaxed, guard);
 
                 let left_child_guard =
-                    unsafe { left_child.as_ref().unwrap().inner.write().unwrap() };
+                    unsafe { left_child.as_ref().unwrap().inner.write_lock() };
 
                 parent_guard.right.store(
                     Node::rotate_right(current, &current_guard, &left_child_guard, guard),
@@ -284,14 +279,14 @@ impl<K: Debug, V: Debug> Node<K, V> {
             // L* rotation
             current = parent_guard.left.load(Ordering::Relaxed, guard);
             let current_ref = unsafe { current.as_ref().unwrap() };
-            current_guard = current_ref.inner.write().unwrap();
+            current_guard = current_ref.inner.write_lock();
 
             if current_guard.get_factor(guard) < 0 {
                 // partial LR rotation
                 let right_child = current_guard.right.load(Ordering::Relaxed, guard);
 
                 let right_child_guard =
-                    unsafe { right_child.as_ref().unwrap().inner.write().unwrap() };
+                    unsafe { right_child.as_ref().unwrap().inner.write_lock() };
 
                 parent_guard.left.store(
                     Node::rotate_left(current, &current_guard, &right_child_guard, guard),
@@ -333,7 +328,6 @@ impl<K: Debug, V: Debug> Node<K, V> {
                 .store(current_guard.get_new_height(guard), Ordering::Release);
         }
     }
-    */
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -435,6 +429,14 @@ where
                 continue;
             }
 
+            // since rebalance, should check restrictly on current's parent
+            if let Some((_, parent_read_guard, _)) = self.ancestors.last() {
+                if !parent_read_guard.validate() {
+                    self.recover();
+                    continue;
+                }
+            }
+
             if next.is_null() {
                 return Err(());
             }
@@ -453,7 +455,7 @@ where
     /// try to cleanup and rebalance the node
     /// TODO: manage repair operation by unique on current waiting list
     fn repair(mut cursor: Cursor<'g, K, V>, guard: &'g Guard) {
-        while let Some((parent, _, dir)) = cursor.ancestors.pop() {
+        while let Some((parent, parent_read_guard, dir)) = cursor.ancestors.pop() {
             if !Node::try_cleanup(cursor.current, parent, dir, guard) {
                 {
                     let current = unsafe { cursor.current.as_ref().unwrap() };
@@ -472,9 +474,9 @@ where
                 }
 
                 // the cursor.current is alive, so try rebalancing
-                // if let Some(root_pair) = cursor.ancestors.last() {
-                //     Node::try_rebalance(parent, root_pair, guard);
-                // }
+                if let Some(root_pair) = cursor.ancestors.last() {
+                    Node::try_rebalance((parent, parent_read_guard), root_pair, guard);
+                }
             }
 
             cursor.current = parent;
@@ -541,7 +543,7 @@ where
     }
 
     fn insert(&self, key: &K, value: V, guard: &Guard) -> Result<(), V> {
-        let node = Node::new(key.clone(), value.clone());
+        let node = Node::new(key.clone(), value);
         let mut cursor = Cursor::new(self, guard);
 
         loop {
@@ -556,6 +558,7 @@ where
             };
 
             if cursor.dir == Dir::Eq && write_guard.value.is_some() {
+                let value = node.inner.into_inner().value.unwrap();
                 return Err(value);
             }
 
@@ -583,6 +586,8 @@ where
                     write_guard.right.store(Owned::new(node), Ordering::Relaxed);
                 }
                 Dir::Eq => {
+                    let value = node.inner.into_inner().value.unwrap();
+
                     if write_guard.value.is_some() {
                         return Err(value);
                     }
