@@ -1,4 +1,5 @@
 mod rwlock;
+mod seqlock;
 
 use std::{collections::BTreeMap, time::Instant};
 

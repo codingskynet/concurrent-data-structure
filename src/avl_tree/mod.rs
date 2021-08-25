@@ -1,4 +1,5 @@
 pub mod rwlock;
+pub mod seqlock;
 
 use crate::map::SequentialMap;
 use std::{cmp::max, fmt::Debug, mem, ops::DerefMut, ptr::{drop_in_place, NonNull}, usize};

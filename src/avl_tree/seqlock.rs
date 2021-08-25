@@ -3,9 +3,6 @@ use crossbeam_epoch::Atomic;
 use crossbeam_epoch::Guard;
 use crossbeam_epoch::Owned;
 use crossbeam_epoch::Shared;
-use crossbeam_utils::sync::ShardedLock;
-use crossbeam_utils::sync::ShardedLockReadGuard;
-use crossbeam_utils::sync::ShardedLockWriteGuard;
 use std::cmp::max;
 use std::fmt::Debug;
 use std::mem;
@@ -13,9 +10,12 @@ use std::mem::ManuallyDrop;
 use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::Ordering;
 
+use crate::lock::seqlock::ReadGuard;
+use crate::lock::seqlock::SeqLock;
+use crate::lock::seqlock::WriteGuard;
 use crate::map::ConcurrentMap;
 
-pub struct RwLockAVLTree<K, V> {
+pub struct SeqLockAVLTree<K, V> {
     root: Atomic<Node<K, V>>,
 }
 
@@ -24,7 +24,7 @@ struct Node<K, V> {
     key: K,
     height: AtomicIsize,
     /// rwlock for shared mutable area
-    inner: ShardedLock<NodeInner<K, V>>,
+    inner: SeqLock<NodeInner<K, V>>,
 }
 
 #[derive(Debug)]
@@ -101,7 +101,7 @@ impl<K: Debug, V: Debug> Node<K, V> {
         Node {
             key,
             height: AtomicIsize::new(1),
-            inner: ShardedLock::new(NodeInner {
+            inner: SeqLock::new(NodeInner {
                 value: Some(value),
                 left: Atomic::null(),
                 right: Atomic::null(),
@@ -115,8 +115,8 @@ impl<K: Debug, V: Debug> Node<K, V> {
     /// For simple managing locks, the function does not call lock, only use given lock guards.
     fn rotate_left<'g>(
         current: Shared<Node<K, V>>,
-        current_guard: &ShardedLockWriteGuard<NodeInner<K, V>>,
-        right_child_guard: &ShardedLockWriteGuard<NodeInner<K, V>>,
+        current_guard: &WriteGuard<NodeInner<K, V>>,
+        right_child_guard: &WriteGuard<NodeInner<K, V>>,
         guard: &'g Guard,
     ) -> Shared<'g, Node<K, V>> {
         let right_child_left_child = right_child_guard.left.load(Ordering::Relaxed, guard);
@@ -134,8 +134,8 @@ impl<K: Debug, V: Debug> Node<K, V> {
     /// For simple managing locks, the function does not call lock, only use given lock guards.
     fn rotate_right<'g>(
         current: Shared<Node<K, V>>,
-        current_guard: &ShardedLockWriteGuard<NodeInner<K, V>>,
-        left_child_guard: &ShardedLockWriteGuard<NodeInner<K, V>>,
+        current_guard: &WriteGuard<NodeInner<K, V>>,
+        left_child_guard: &WriteGuard<NodeInner<K, V>>,
         guard: &'g Guard,
     ) -> Shared<'g, Node<K, V>> {
         let left_child_right_child = left_child_guard.right.load(Ordering::Relaxed, guard);
@@ -160,7 +160,7 @@ impl<K: Debug, V: Debug> Node<K, V> {
         let parent_ref = unsafe { parent.as_ref().unwrap() };
 
         let current_ref = unsafe { current.as_ref().unwrap() };
-        let read_guard = current_ref.inner.read().unwrap();
+        let read_guard = unsafe { current_ref.inner.read_lock() };
 
         // only already logically removed node can be cleaned up
         if read_guard.value.is_none() {
@@ -171,13 +171,15 @@ impl<K: Debug, V: Debug> Node<K, V> {
 
             // if the node has one or zero node, the node can be directly removed
             if left || right {
-                drop(read_guard);
-
-                let parent_write_guard = parent_ref.inner.write().unwrap();
+                let parent_write_guard = parent_ref.inner.write_lock();
 
                 // check if current's parent is even parent now
                 if parent_write_guard.is_same_child(dir, current, guard) {
-                    let write_guard = current_ref.inner.write().unwrap();
+                    let write_guard = if let Ok(guard) = read_guard.clone().upgrade() {
+                        guard
+                    } else {
+                        return false;
+                    };
 
                     let (left, right) = (
                         write_guard.left.load(Ordering::Relaxed, guard),
@@ -216,9 +218,12 @@ impl<K: Debug, V: Debug> Node<K, V> {
             }
         }
 
+        mem::forget(read_guard);
+
         false
     }
 
+    /*
     /// rebalance from current to grand_parent and renew all changed nodes
     ///
     /// If the relation among the nodes is not changed and the heights are needed to rotate, do it.
@@ -245,7 +250,7 @@ impl<K: Debug, V: Debug> Node<K, V> {
         let parent_ref = unsafe { parent.as_ref().unwrap() };
         let parent_guard = parent_ref.inner.write().unwrap();
         let mut current: Shared<Node<K, V>>;
-        let mut current_guard: ShardedLockWriteGuard<NodeInner<K, V>>;
+        let mut current_guard: WriteGuard<NodeInner<K, V>>;
 
         if parent_guard.get_factor(guard) <= -2 {
             // R* rotation
@@ -335,6 +340,7 @@ impl<K: Debug, V: Debug> Node<K, V> {
                 .store(current_guard.get_new_height(guard), Ordering::Release);
         }
     }
+    */
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -349,7 +355,7 @@ struct Cursor<'g, K, V> {
     current: Shared<'g, Node<K, V>>,
     /// the read lock for current node's inner
     /// It keeps current node's inner and is for hand-over-hand locking.
-    inner_guard: ManuallyDrop<ShardedLockReadGuard<'g, NodeInner<K, V>>>,
+    inner_guard: ManuallyDrop<ReadGuard<'g, NodeInner<K, V>>>,
     dir: Dir,
 }
 
@@ -358,9 +364,9 @@ where
     K: Debug,
     V: Debug,
 {
-    fn new(tree: &RwLockAVLTree<K, V>, guard: &'g Guard) -> Cursor<'g, K, V> {
+    fn new(tree: &SeqLockAVLTree<K, V>, guard: &'g Guard) -> Cursor<'g, K, V> {
         let root = tree.root.load(Ordering::Relaxed, guard);
-        let inner_guard = unsafe { root.as_ref().unwrap().inner.read().unwrap() };
+        let inner_guard = unsafe { root.as_ref().unwrap().inner.read_lock() };
 
         let cursor = Cursor {
             ancestors: vec![],
@@ -382,12 +388,16 @@ where
             Dir::Eq => panic!("The node is already arrived."),
         };
 
+        if !self.inner_guard.validate() {
+            // Optimistic read lock is failed. Retry
+            // How to deal with the invalidated guard when it is due to rebalance?
+        }
+
         if next.is_null() {
             return Err(());
         }
 
-        let next_node = unsafe { next.as_ref().unwrap() };
-        let next_guard = next_node.inner.read().unwrap();
+        let next_guard = unsafe { next.as_ref().unwrap().inner.read_lock() };
 
         let parent = mem::replace(&mut self.current, next);
         self.ancestors.push((parent, self.dir));
@@ -396,7 +406,7 @@ where
         let mut parent_guard = mem::replace(&mut self.inner_guard, ManuallyDrop::new(next_guard));
 
         unsafe {
-            ManuallyDrop::drop(&mut parent_guard);
+            mem::forget(ManuallyDrop::take(&mut parent_guard));
         }
 
         Ok(())
@@ -409,17 +419,24 @@ where
             if !Node::try_cleanup(cursor.current, parent, dir, guard) {
                 {
                     let current = unsafe { cursor.current.as_ref().unwrap() };
-                    let current_guard = current.inner.read().unwrap();
 
-                    current
-                        .height
-                        .store(current_guard.get_new_height(guard), Ordering::Release);
+                    unsafe {
+                        while current
+                            .inner
+                            .read(|read_guard| {
+                                current
+                                    .height
+                                    .store(read_guard.get_new_height(guard), Ordering::Release);
+                            })
+                            .is_some()
+                        {}
+                    };
                 }
 
                 // the cursor.current is alive, so try rebalancing
-                if let Some(root_pair) = cursor.ancestors.last() {
-                    Node::try_rebalance(parent, root_pair, guard);
-                }
+                // if let Some(root_pair) = cursor.ancestors.last() {
+                //     Node::try_rebalance(parent, root_pair, guard);
+                // }
             }
 
             cursor.current = parent;
@@ -427,7 +444,7 @@ where
     }
 }
 
-impl<K, V> RwLockAVLTree<K, V>
+impl<K, V> SeqLockAVLTree<K, V>
 where
     K: Default + Ord + Clone + Debug,
     V: Default + Debug,
@@ -441,6 +458,7 @@ where
         let mut cursor = Cursor::new(self, guard);
 
         loop {
+            // TODO: consider tag for removing
             if cursor.move_next(guard).is_err() {
                 return cursor;
             }
@@ -467,8 +485,7 @@ where
                 .as_ref()
                 .unwrap()
                 .inner
-                .read()
-                .unwrap()
+                .write_lock()
                 .right
                 .load(Ordering::Relaxed, guard)
                 .as_ref()
@@ -486,7 +503,7 @@ where
             }
 
             let node = unsafe { node.as_ref().unwrap() };
-            let node_inner = node.inner.read().unwrap();
+            let node_inner = node.inner.write_lock();
 
             format!(
                 "{{key: {:?},  height: {}, value: {:?}, left: {}, right: {}}}",
@@ -502,52 +519,50 @@ where
     }
 }
 
-impl<K, V> ConcurrentMap<K, V> for RwLockAVLTree<K, V>
+impl<K, V> ConcurrentMap<K, V> for SeqLockAVLTree<K, V>
 where
     K: Ord + Clone + Default + Debug,
     V: Clone + Default + Debug,
 {
     fn new() -> Self {
-        RwLockAVLTree {
+        SeqLockAVLTree {
             root: Atomic::new(Node::default()),
         }
     }
 
     fn insert(&self, key: &K, value: V, guard: &Guard) -> Result<(), V> {
-        let node = Node::new(key.clone(), value);
+        let node = Node::new(key.clone(), value.clone());
 
         // TODO: it can be optimized by re-search nearby ancestors
         loop {
             let mut cursor = self.find(key, guard);
 
-            // unlock read lock and lock write lock... very inefficient, need upgrade from read lock to write lock
-            unsafe {
-                ManuallyDrop::drop(&mut cursor.inner_guard);
-            }
-
             if cursor.dir == Dir::Eq && cursor.inner_guard.value.is_some() {
-                let node_inner = node.inner.into_inner().unwrap();
-                return Err(node_inner.value.unwrap());
+                return Err(value);
             }
 
-            let current = unsafe { cursor.current.as_ref().unwrap() };
-
-            // check if the current is alive now by checking parent node. If disconnected, retry
-            // TODO: is it efficient? It needs to check only whether the current is connected, not checking the current's parent is changed.
-            let parent_read_guard = if let Some((parent, dir)) = cursor.ancestors.last() {
-                let parent_read_guard = unsafe { parent.as_ref().unwrap().inner.read().unwrap() };
-                if !parent_read_guard.is_same_child(*dir, cursor.current, guard) {
-                    // Before inserting, the current is already disconnected.
+            // let current = unsafe { cursor.current.as_ref().unwrap() };
+            let mut write_guard = unsafe {
+                if let Ok(guard) = ManuallyDrop::take(&mut cursor.inner_guard).upgrade() {
+                    guard
+                } else {
                     continue;
                 }
-                Some(parent_read_guard)
-            } else {
-                None
             };
 
-            let mut write_guard = current.inner.write().unwrap();
+            // check if the current is alive now by checking parent node. If disconnected, retry
+            if let Some((parent, dir)) = cursor.ancestors.last() {
+                let parent_read_guard = unsafe { parent.as_ref().unwrap().inner.read_lock() };
 
-            drop(parent_read_guard);
+                if !parent_read_guard.is_same_child(*dir, cursor.current, guard) {
+                    // Before inserting, the current is already disconnected.
+                    mem::forget(parent_read_guard);
+
+                    continue;
+                }
+
+                mem::forget(parent_read_guard);
+            }
 
             match cursor.dir {
                 Dir::Left => {
@@ -565,8 +580,6 @@ where
                     write_guard.right.store(Owned::new(node), Ordering::Relaxed);
                 }
                 Dir::Eq => {
-                    let value = node.inner.into_inner().unwrap().value.unwrap();
-
                     if write_guard.value.is_some() {
                         return Err(value);
                     }
@@ -606,13 +619,13 @@ where
         }
 
         // unlock read lock and lock write lock... very inefficient, need upgrade from read lock to write lock
-        let mut write_guard = current.inner.write().unwrap();
+        let mut write_guard = current.inner.write_lock();
 
         if write_guard.value.is_none() {
             return Err(());
         }
 
-        let value = write_guard.value.take().unwrap();
+        let value = (*write_guard).value.take().unwrap();
         drop(write_guard);
 
         Cursor::repair(cursor, guard);
@@ -621,13 +634,13 @@ where
     }
 }
 
-impl<K, V> Drop for RwLockAVLTree<K, V> {
+impl<K, V> Drop for SeqLockAVLTree<K, V> {
     fn drop(&mut self) {
         let pin = pin();
         let mut nodes = vec![mem::replace(&mut self.root, Atomic::null())];
         while let Some(node) = nodes.pop() {
             let node = unsafe { node.into_owned() };
-            let mut write_guard = node.inner.write().unwrap();
+            let mut write_guard = node.inner.write_lock();
 
             let left = mem::replace(&mut write_guard.left, Atomic::null());
             let right = mem::replace(&mut write_guard.right, Atomic::null());
