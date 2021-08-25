@@ -432,8 +432,8 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
 
         // check if the error log has contradiction
         //
-        // insert: if the error log occurs between finishing removing and starting inserting, it is a contradiction
-        // lookup/remove: if the error log occurs between finishing inserting and starting removing, it is a contradiction
+        // insert: if the error log occurs between finishing removing and starting inserting, it is contradiction
+        // lookup/remove: if the error log occurs between finishing inserting and starting removing, it is contradiction
         error_logs.sort_by(|a, b| a.start.cmp(&b.start));
 
         let mut error_logs = VecDeque::from(error_logs);
@@ -483,7 +483,7 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
                         Operation::Insert => {
                             if old.3 < error_log.start && error_log.end < new.0 {
                                 panic!(
-                                    "The error log {:?} has contradiction on {:?}.",
+                                    "The error log '{:?}' has contradiction on: {:?}",
                                     error_log, old
                                 );
                             } else {
@@ -649,7 +649,11 @@ fn verify_log_bunches<K: Debug, V: Clone + Debug + PartialEq>(
 // verify if the logs have no contradiction on order
 fn verify_logs<K: Debug, V: Clone + Debug + PartialEq>(logs: Vec<&Log<K, V>>) -> bool {
     let mut old_log = &logs[0];
-    let mut state = verify_state_log(None, &old_log).unwrap();
+    let mut state = if let Ok(state) = verify_state_log(None, &old_log) {
+        state
+    } else {
+        panic!("Logs is contradiction: {:?}", logs);
+    };
 
     for log in logs.iter().skip(1) {
         // the old log should be former or overlapped

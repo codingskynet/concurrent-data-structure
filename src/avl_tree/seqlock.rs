@@ -6,7 +6,6 @@ use crossbeam_epoch::Shared;
 use std::cmp::max;
 use std::fmt::Debug;
 use std::mem;
-use std::mem::ManuallyDrop;
 use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::Ordering;
 
@@ -404,7 +403,7 @@ where
                 self.current = parent;
                 self.inner_guard = parent_read_guard;
                 self.dir = dir;
-                return;
+                break;
             }
 
             // now parent is root
@@ -412,9 +411,10 @@ where
                 self.current = parent;
                 self.inner_guard = parent_read_guard;
                 self.dir = dir;
-                println!("Move to root!");
             }
         }
+
+        self.inner_guard.restart();
     }
 
     /// move the cursor to the direction using hand-over-hand locking
@@ -422,32 +422,32 @@ where
     /// If the cursor can move to next, return Ok(()) else Err(())
     /// The cursor's dir is never changed by any functions. You should change it manually like `cursor.dir = Dir::Left`.
     fn move_next(&mut self, guard: &'g Guard) -> Result<(), ()> {
-        let next = match self.dir {
-            Dir::Left => self.inner_guard.left.load(Ordering::Relaxed, guard),
-            Dir::Right => self.inner_guard.right.load(Ordering::Relaxed, guard),
-            Dir::Eq => panic!("The node is already arrived."),
-        };
+        loop {
+            let next = match self.dir {
+                Dir::Left => self.inner_guard.left.load(Ordering::Relaxed, guard),
+                Dir::Right => self.inner_guard.right.load(Ordering::Relaxed, guard),
+                Dir::Eq => panic!("The node is already arrived."),
+            };
 
-        if !self.inner_guard.validate() {
-            // Optimistic read lock is failed. Retry
-            // How to deal with the invalidated guard when it is due to rebalance?
+            if !self.inner_guard.validate() {
+                // Optimistic read lock is failed. Retry
+                self.recover();
+                continue;
+            }
 
-            self.recover();
+            if next.is_null() {
+                return Err(());
+            }
+
+            let next_guard = unsafe { next.as_ref().unwrap().inner.read_lock() };
+
+            // replace with current's read guard, then store parent_guard in cursor
+            let parent = mem::replace(&mut self.current, next);
+            let parent_guard = mem::replace(&mut self.inner_guard, next_guard);
+            self.ancestors.push((parent, parent_guard, self.dir));
+
             return Ok(());
         }
-
-        if next.is_null() {
-            return Err(());
-        }
-
-        let next_guard = unsafe { next.as_ref().unwrap().inner.read_lock() };
-
-        // replace with current's read guard, then store parent_guard in cursor
-        let parent = mem::replace(&mut self.current, next);
-        let parent_guard = mem::replace(&mut self.inner_guard, next_guard);
-        self.ancestors.push((parent, parent_guard, self.dir));
-
-        Ok(())
     }
 
     /// try to cleanup and rebalance the node
@@ -547,19 +547,17 @@ where
         loop {
             // if the cursor is invalid, then move up until cursor.inner_guard is valid
             cursor.recover();
-
             cursor.find(key, guard);
 
-            if cursor.dir == Dir::Eq && cursor.inner_guard.value.is_some() {
-                return Err(value);
-            }
-
-            // let current = unsafe { cursor.current.as_ref().unwrap() };
             let mut write_guard = if let Ok(guard) = cursor.inner_guard.clone().upgrade() {
                 guard
             } else {
                 continue;
             };
+
+            if cursor.dir == Dir::Eq && write_guard.value.is_some() {
+                return Err(value);
+            }
 
             // check if the current is alive now by checking parent node. If disconnected, retry
             if let Some((_, read_guard, dir)) = cursor.ancestors.last() {
@@ -603,35 +601,49 @@ where
 
     fn lookup(&self, key: &K, guard: &Guard) -> Option<V> {
         let mut cursor = Cursor::new(self, guard);
-        cursor.find(key, guard);
 
-        if cursor.dir == Dir::Eq {
-            return cursor.inner_guard.value.clone();
-        } else {
-            return None;
+        loop {
+            cursor.recover();
+            cursor.find(key, guard);
+
+            if cursor.dir == Dir::Eq {
+                let value = cursor.inner_guard.value.clone();
+
+                if !cursor.inner_guard.validate() {
+                    continue;
+                }
+
+                return value;
+            } else {
+                return None;
+            }
         }
     }
 
     fn remove(&self, key: &K, guard: &Guard) -> Result<V, ()> {
         let mut cursor = Cursor::new(self, guard);
-        cursor.find(key, guard);
 
-        if cursor.dir != Dir::Eq {
-            return Err(());
-        }
+        loop {
+            cursor.recover();
+            cursor.find(key, guard);
 
-        let mut write_guard = if let Ok(guard) = cursor.inner_guard.clone().upgrade() {
-            guard
-        } else {
-            return Err(());
-        };
+            if cursor.dir != Dir::Eq {
+                return Err(());
+            }
 
-        if let Some(value) = (*write_guard).value.take() {
-            drop(write_guard);
-            Cursor::repair(cursor, guard);
-            return Ok(value);
-        } else {
-            return Err(());
+            let mut write_guard = if let Ok(guard) = cursor.inner_guard.clone().upgrade() {
+                guard
+            } else {
+                continue;
+            };
+
+            if let Some(value) = (*write_guard).value.take() {
+                drop(write_guard);
+                Cursor::repair(cursor, guard);
+                return Ok(value);
+            } else {
+                return Err(());
+            }
         }
     }
 }
