@@ -20,7 +20,7 @@ TODO: implement Michael-Scott queue
 TODO: implement Harris linked list
 
 ### AVL Tree
-- Implement simple concurrent AVL Tree with RwLock(crossbeam_utils::sync::ShardedLock)
+- Implement simple concurrent AVL Tree with RwLock(crossbeam_utils::sync::ShardedLock), SeqLock
 
 ### Red-Black Tree
 TODO: ?

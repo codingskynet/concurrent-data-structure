@@ -97,13 +97,6 @@ fn bench_large_tree() {
     let start = Instant::now();
     for _ in 0..iter {
         let key = rng.gen_range(0..(iter * 2));
-        let _ = reference.insert(key, key);
-    }
-    println!("std::BTreemap {} Insert: {} ms", iter, start.elapsed().as_millis());
-
-    let start = Instant::now();
-    for _ in 0..iter {
-        let key = rng.gen_range(0..(iter * 2));
         let _ = avl.lookup(&key);
     }
     println!("AVL {} Lookup(50% success): {} ms", iter, start.elapsed().as_millis());
@@ -111,16 +104,23 @@ fn bench_large_tree() {
     let start = Instant::now();
     for _ in 0..iter {
         let key = rng.gen_range(0..(iter * 2));
-        let _ = reference.get(&key);
+        let _ = avl.remove(&key);
     }
-    println!("std::BTreemap {} Lookup(50% success): {} ms", iter, start.elapsed().as_millis());
+    println!("AVL {} Remove(50% success): {} ms", iter, start.elapsed().as_millis());
 
     let start = Instant::now();
     for _ in 0..iter {
         let key = rng.gen_range(0..(iter * 2));
-        let _ = avl.remove(&key);
+        let _ = reference.insert(key, key);
     }
-    println!("AVL {} Remove(50% success): {} ms", iter, start.elapsed().as_millis());
+    println!("std::BTreemap {} Insert: {} ms", iter, start.elapsed().as_millis());
+
+    let start = Instant::now();
+    for _ in 0..iter {
+        let key = rng.gen_range(0..(iter * 2));
+        let _ = reference.get(&key);
+    }
+    println!("std::BTreemap {} Lookup(50% success): {} ms", iter, start.elapsed().as_millis());
 
     let start = Instant::now();
     for _ in 0..iter {
