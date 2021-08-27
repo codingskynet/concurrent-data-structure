@@ -146,8 +146,8 @@ fn bench_large_seqlock_avl_tree() {
 
 #[test]
 fn bench_mixed_seqlock_avl_tree() {
-    let already_inserted = 100_000;
-    let total_ops = 100_000;
+    let already_inserted = 1_000_000;
+    let total_ops = 1_000_000;
     let insert_rate = 30;
     let lookup_rate = 50;
     let remove_rate = 20;

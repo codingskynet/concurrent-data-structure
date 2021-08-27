@@ -754,7 +754,7 @@ pub fn bench_concurrent_stat<M>(
 {
     let total_ops = insert + lookup + remove;
 
-    println!("Inserted {} {} Mixed Operations (I: {} + L: {} + R: {} = total: {}) splitted by {} threads",
+    println!("{} Inserted {} Mixed Operations (I: {} + L: {} + R: {} = total: {}) splitted by {} threads",
     already_inserted, name, insert, lookup, remove, total_ops, thread_num);
 
     let mut stat = Vec::new();
@@ -775,25 +775,49 @@ pub fn bench_concurrent_stat<M>(
         ));
     }
 
-    let mut stat = stat
-        .iter()
-        .map(|x| x.as_secs_f64() * 1000 as f64)
-        .collect::<Vec<_>>();
-    stat.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    {
+        let mut thread_stat = stat
+            .iter()
+            .map(|x| x.as_secs_f64() * 1000. / thread_num as f64)
+            .collect::<Vec<_>>();
+        thread_stat.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-    let avg = stat.iter().sum::<f64>() / (stat.len() as f64);
-    let std = stat
-        .iter()
-        .map(|x| (x.max(avg) - x.min(avg)).powf(2.) / (stat.len() as f64))
-        .sum::<f64>();
+        let avg = thread_stat.iter().sum::<f64>() / (thread_stat.len() as f64);
+        let std = thread_stat
+            .iter()
+            .map(|x| (x.max(avg) - x.min(avg)).powf(2.) / (thread_stat.len() as f64))
+            .sum::<f64>();
 
-    println!(
-        "Min Time {:.3} ms, Avg Time: {:.3} ms, Max Time: {:.3} ms, STD: {:.3} ms",
-        stat[0],
-        avg,
-        stat[stat.len() - 1],
-        f64::sqrt(std),
-    )
+        println!(
+            "Min Time {:>8.3} ms, Avg Time: {:>8.3} ms, Max Time: {:>8.3} ms, STD: {:>8.3} ms Per Avg Thread",
+            thread_stat[0],
+            avg,
+            thread_stat[stat.len() - 1],
+            f64::sqrt(std),
+        );
+    }
+
+    {
+        let mut op_stat = stat
+            .iter()
+            .map(|x| (x.as_nanos() / (total_ops as u128)) as f64)
+            .collect::<Vec<_>>();
+        op_stat.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let avg = op_stat.iter().sum::<f64>() / (op_stat.len() as f64);
+        let std = op_stat
+            .iter()
+            .map(|x| (x.max(avg) - x.min(avg)).powf(2.) / (op_stat.len() as f64))
+            .sum::<f64>();
+
+        println!(
+            "Min Time {:>8.3} ns, Avg Time: {:>8.3} ns, Max Time: {:>8.3} ns, STD: {:>8.3} ns Per Avg Op",
+            op_stat[0],
+            avg,
+            op_stat[stat.len() - 1],
+            f64::sqrt(std),
+        );
+    }
 }
 
 pub fn bench_mixed_concurrent<M>(
@@ -869,6 +893,6 @@ where
     })
     .unwrap();
 
-    // avg thread time
-    batched_time / thread_num
+    // total thread time
+    batched_time
 }
