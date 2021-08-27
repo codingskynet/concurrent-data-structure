@@ -250,8 +250,7 @@ impl<K: Debug, V: Debug> Node<K, V> {
                 // partial RL rotation
                 let left_child = current_guard.left.load(Ordering::Relaxed, guard);
 
-                let left_child_guard =
-                    unsafe { left_child.as_ref().unwrap().inner.write_lock() };
+                let left_child_guard = unsafe { left_child.as_ref().unwrap().inner.write_lock() };
 
                 parent_guard.right.store(
                     Node::rotate_right(current, &current_guard, &left_child_guard, guard),
@@ -285,8 +284,7 @@ impl<K: Debug, V: Debug> Node<K, V> {
                 // partial LR rotation
                 let right_child = current_guard.right.load(Ordering::Relaxed, guard);
 
-                let right_child_guard =
-                    unsafe { right_child.as_ref().unwrap().inner.write_lock() };
+                let right_child_guard = unsafe { right_child.as_ref().unwrap().inner.write_lock() };
 
                 parent_guard.left.store(
                     Node::rotate_left(current, &current_guard, &right_child_guard, guard),

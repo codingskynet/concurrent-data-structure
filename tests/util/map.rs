@@ -356,8 +356,11 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
 
             logs = fixed_logs;
 
-            // print_logs(&logs);
-            verify_logs(logs.iter().collect::<Vec<_>>());
+            assert!(
+                verify_logs(logs.iter().collect::<Vec<_>>()),
+                "the logs of (key, value) failed to assert:\n{:?}",
+                logs
+            );
 
             // TODO: split bunch into multiple bunches if multiple insert-remove pairs exist.
             let insert = (&logs)
@@ -736,4 +739,136 @@ fn verify_state_log<K, V: Clone + PartialEq>(
             }
         }
     }
+}
+
+pub fn bench_concurrent_stat<M>(
+    name: &str,
+    already_inserted: u64,
+    insert: u32,
+    lookup: u32,
+    remove: u32,
+    thread_num: u32,
+    max_time: u128, // the max time for repeating benches (second)
+) where
+    M: Sync + ConcurrentMap<u64, u64>,
+{
+    let total_ops = insert + lookup + remove;
+
+    println!("Inserted {} {} Mixed Operations (I: {} + L: {} + R: {} = total: {}) splitted by {} threads",
+    already_inserted, name, insert, lookup, remove, total_ops, thread_num);
+
+    let mut stat = Vec::new();
+    let start = Instant::now();
+    let first = bench_mixed_concurrent::<M>(already_inserted, insert, lookup, remove, thread_num);
+    stat.push(first);
+
+    let iters = max_time * 1000 / start.elapsed().as_millis();
+    println!("Repeating {} times...", iters);
+
+    for _ in 1..iters {
+        stat.push(bench_mixed_concurrent::<M>(
+            already_inserted,
+            insert,
+            lookup,
+            remove,
+            thread_num,
+        ));
+    }
+
+    let mut stat = stat
+        .iter()
+        .map(|x| x.as_secs_f64() * 1000 as f64)
+        .collect::<Vec<_>>();
+    stat.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    let avg = stat.iter().sum::<f64>() / (stat.len() as f64);
+    let std = stat
+        .iter()
+        .map(|x| (x.max(avg) - x.min(avg)).powf(2.) / (stat.len() as f64))
+        .sum::<f64>();
+
+    println!(
+        "Min Time {:.3} ms, Avg Time: {:.3} ms, Max Time: {:.3} ms, STD: {:.3} ms",
+        stat[0],
+        avg,
+        stat[stat.len() - 1],
+        f64::sqrt(std),
+    )
+}
+
+pub fn bench_mixed_concurrent<M>(
+    already_inserted: u64,
+    insert: u32,
+    lookup: u32,
+    remove: u32,
+    thread_num: u32,
+) -> Duration
+where
+    M: Sync + ConcurrentMap<u64, u64>,
+{
+    let total_ops = insert + lookup + remove;
+
+    let map = M::new();
+    let mut rng = thread_rng();
+
+    let mut range: Vec<u64> = (0..already_inserted).collect();
+    range.shuffle(&mut rng);
+
+    // pre-insert
+    for i in range {
+        let _ = map.insert(&i, i, &pin());
+    }
+
+    let batched_time = thread::scope(|s| {
+        let mut threads = Vec::new();
+
+        for _ in 0..thread_num {
+            let t = s.spawn(|_| {
+                let mut rng = thread_rng();
+                let mut duration = Duration::ZERO;
+
+                for _ in 0..(total_ops / thread_num) {
+                    let op_idx: u32 = rng.gen_range(0..total_ops);
+
+                    if op_idx < insert {
+                        // insert
+                        let key: u64 = rng.gen_range(already_inserted..u64::MAX);
+
+                        let start = Instant::now();
+                        let _ = map.insert(&key, key, &pin());
+                        duration += start.elapsed();
+                    } else if op_idx < insert + lookup {
+                        // lookup
+                        let key: u64 = rng.gen_range(0..already_inserted);
+
+                        let start = Instant::now();
+                        let _ = map.lookup(&key, &pin());
+                        duration += start.elapsed();
+                    } else {
+                        // remove
+                        let key: u64 = rng.gen_range(0..already_inserted);
+
+                        let start = Instant::now();
+                        let _ = map.remove(&key, &pin());
+                        duration += start.elapsed();
+                    }
+                }
+
+                duration
+            });
+
+            threads.push(t);
+        }
+
+        threads
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect::<Vec<_>>()
+            .iter()
+            .sum::<Duration>()
+    })
+    .unwrap();
+
+    // avg thread time
+    batched_time / thread_num
 }

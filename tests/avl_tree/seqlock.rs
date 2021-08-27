@@ -5,7 +5,7 @@ use crossbeam_epoch::pin;
 use crossbeam_utils::thread;
 use rand::{thread_rng, Rng};
 
-use crate::util::map::{stress_concurrent, stress_concurrent_as_sequential};
+use crate::util::map::{bench_concurrent_stat, stress_concurrent, stress_concurrent_as_sequential};
 
 #[test]
 fn test_seqlock_avl_tree() {
@@ -142,4 +142,27 @@ fn bench_large_seqlock_avl_tree() {
         thread_num * iter,
         start.elapsed().as_millis()
     );
+}
+
+#[test]
+fn bench_mixed_seqlock_avl_tree() {
+    let already_inserted = 100_000;
+    let total_ops = 100_000;
+    let insert_rate = 30;
+    let lookup_rate = 50;
+    let remove_rate = 20;
+    let thread_num = 4;
+    let max_time = 20; // the max time for checking repeating benches (second)
+
+    assert_eq!(insert_rate + lookup_rate + remove_rate, 100);
+
+    bench_concurrent_stat::<SeqLockAVLTree<_, _>>(
+        "SeqLockAVLTree",
+        already_inserted,
+        total_ops * insert_rate / 100,
+        total_ops * lookup_rate / 100,
+        total_ops * remove_rate / 100,
+        thread_num,
+        max_time,
+    )
 }

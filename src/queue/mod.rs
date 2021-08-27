@@ -13,10 +13,7 @@ struct Node<V> {
 
 impl<V> Node<V> {
     fn new(value: V) -> Node<V> {
-        Node {
-            value, 
-            next: None
-        }
+        Node { value, next: None }
     }
 }
 
@@ -58,7 +55,7 @@ impl<V> Queue<V> {
             let mut top = mem::replace(&mut self.head, None);
             self.head = mem::replace(&mut top.as_mut().unwrap().next, None);
 
-            return Some(top.unwrap().value)
+            return Some(top.unwrap().value);
         }
 
         None

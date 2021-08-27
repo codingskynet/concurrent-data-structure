@@ -2,7 +2,14 @@ pub mod rwlock;
 pub mod seqlock;
 
 use crate::map::SequentialMap;
-use std::{cmp::max, fmt::Debug, mem, ops::DerefMut, ptr::{drop_in_place, NonNull}, usize};
+use std::{
+    cmp::max,
+    fmt::Debug,
+    mem,
+    ops::DerefMut,
+    ptr::{drop_in_place, NonNull},
+    usize,
+};
 
 // how to show the structure of node
 // use: unsafe { println!("Show tree info:\n{:?}", self.root.as_ref()) };

@@ -11,5 +11,5 @@ rand = "0.8.4"
 criterion = "0.3.4"
 
 [[bench]]
-name = "avl_tree"
+name = "main"
 harness = false

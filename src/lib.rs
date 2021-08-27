@@ -1,7 +1,7 @@
-pub mod stack;
-pub mod queue;
-pub mod map;
-pub mod linkedlist;
 pub mod avl_tree;
-pub mod util;
+pub mod linkedlist;
 mod lock;
+pub mod map;
+pub mod queue;
+pub mod stack;
+pub mod util;

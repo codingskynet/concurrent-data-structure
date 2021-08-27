@@ -1,7 +1,3 @@
-struct TreiberStack {
+struct TreiberStack {}
 
-}
-
-struct EliminationBackOffStack {
-    
-}
+struct EBStack {}

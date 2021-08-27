@@ -4,7 +4,7 @@ pub trait SequentialMap<K: Eq, V> {
     fn new() -> Self;
 
     /// Insert (key, vaule) into the map.
-    /// 
+    ///
     /// If success, return Ok(()).
     /// If fail, return Err(value) that you tried to insert.
     fn insert(&mut self, key: &K, value: V) -> Result<(), V>;
@@ -26,7 +26,7 @@ pub trait ConcurrentMap<K: Eq, V> {
     fn new() -> Self;
 
     /// Insert (key, vaule) into the map.
-    /// 
+    ///
     /// If success, return Ok(()).
     /// If fail, return Err(value) that you tried to insert.
     fn insert(&self, key: &K, value: V, guard: &Guard) -> Result<(), V>;
