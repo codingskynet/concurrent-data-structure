@@ -18,15 +18,12 @@ pub struct SeqLockAVLTree<K, V> {
     root: Atomic<Node<K, V>>,
 }
 
-#[derive(Debug)]
 struct Node<K, V> {
     key: K,
     height: AtomicIsize,
-    /// rwlock for shared mutable area
     inner: SeqLock<NodeInner<K, V>>,
 }
 
-#[derive(Debug)]
 struct NodeInner<K, V> {
     value: Option<V>,
     left: Atomic<Node<K, V>>,
@@ -42,6 +39,7 @@ impl<K, V> NodeInner<K, V> {
         }
     }
 
+    #[inline(always)]
     fn is_same_child(&self, dir: Dir, child: Shared<Node<K, V>>, guard: &Guard) -> bool {
         self.get_child(dir).load(Ordering::Relaxed, guard) == child
     }
@@ -85,17 +83,13 @@ impl<K, V> NodeInner<K, V> {
     }
 }
 
-impl<K, V> Default for Node<K, V>
-where
-    K: Debug + Default,
-    V: Debug + Default,
-{
+impl<K: Default, V: Default> Default for Node<K, V> {
     fn default() -> Self {
         Self::new(K::default(), V::default())
     }
 }
 
-impl<K: Debug, V: Debug> Node<K, V> {
+impl<K, V> Node<K, V> {
     fn new(key: K, value: V) -> Node<K, V> {
         Node {
             key,
@@ -174,41 +168,37 @@ impl<K: Debug, V: Debug> Node<K, V> {
 
                 // check if current's parent is even parent now
                 if parent_write_guard.is_same_child(dir, current, guard) {
-                    let write_guard = current_ref.inner.write_lock();
+                    let write_guard = if let Ok(write_guard) = read_guard.upgrade() {
+                        write_guard
+                    } else {
+                        return false;
+                    };
 
-                    let (left, right) = (
-                        write_guard.left.load(Ordering::Relaxed, guard),
-                        write_guard.right.load(Ordering::Relaxed, guard),
+                    let replace_node = if !left {
+                        write_guard
+                            .left
+                            .swap(Shared::null(), Ordering::Relaxed, guard)
+                    } else {
+                        write_guard
+                            .right
+                            .swap(Shared::null(), Ordering::Relaxed, guard)
+                    };
+
+                    let current = parent_write_guard.get_child(dir).swap(
+                        replace_node,
+                        Ordering::Relaxed,
+                        guard,
                     );
 
-                    // re-check if it can be removed
-                    if write_guard.value.is_none() && (left.is_null() || right.is_null()) {
-                        let replace_node = if !left.is_null() {
-                            write_guard
-                                .left
-                                .swap(Shared::null(), Ordering::Relaxed, guard)
-                        } else {
-                            write_guard
-                                .right
-                                .swap(Shared::null(), Ordering::Relaxed, guard)
-                        };
+                    drop(parent_write_guard);
+                    drop(write_guard);
 
-                        let current = parent_write_guard.get_child(dir).swap(
-                            replace_node,
-                            Ordering::Relaxed,
-                            guard,
-                        );
-
-                        drop(parent_write_guard);
-                        drop(write_guard);
-
-                        // request deallocate removed node
-                        unsafe {
-                            guard.defer_destroy(current);
-                        }
-
-                        return true;
+                    // request deallocate removed node
+                    unsafe {
+                        guard.defer_destroy(current);
                     }
+
+                    return true;
                 }
             }
         }
@@ -344,11 +334,7 @@ struct Cursor<'g, K, V> {
     dir: Dir,
 }
 
-impl<'g, K, V> Cursor<'g, K, V>
-where
-    K: Debug + PartialOrd,
-    V: Debug,
-{
+impl<'g, K: Ord, V> Cursor<'g, K, V> {
     fn new(tree: &SeqLockAVLTree<K, V>, guard: &'g Guard) -> Cursor<'g, K, V> {
         let root = tree.root.load(Ordering::Relaxed, guard);
         let inner_guard = unsafe { root.as_ref().unwrap().inner.read_lock() };
@@ -455,20 +441,20 @@ where
     fn repair(mut cursor: Cursor<'g, K, V>, guard: &'g Guard) {
         while let Some((parent, parent_read_guard, dir)) = cursor.ancestors.pop() {
             if !Node::try_cleanup(cursor.current, parent, dir, guard) {
-                {
-                    let current = unsafe { cursor.current.as_ref().unwrap() };
+                let current = unsafe { cursor.current.as_ref().unwrap() };
 
-                    unsafe {
-                        while !current
-                            .inner
-                            .read(|read_guard| {
-                                current
-                                    .height
-                                    .store(read_guard.get_new_height(guard), Ordering::Release);
-                            })
-                            .is_some()
-                        {}
+                loop {
+                    let update_height = unsafe {
+                        current.inner.read(|read_guard| {
+                            current
+                                .height
+                                .store(read_guard.get_new_height(guard), Ordering::Release);
+                        })
                     };
+
+                    if update_height.is_ok() {
+                        break;
+                    }
                 }
 
                 // the cursor.current is alive, so try rebalancing
@@ -482,29 +468,7 @@ where
     }
 }
 
-impl<K, V> SeqLockAVLTree<K, V>
-where
-    K: Default + Ord + Clone + Debug,
-    V: Default + Debug,
-{
-    /// get the height of the tree
-    pub fn get_height(&self, guard: &Guard) -> usize {
-        unsafe {
-            self.root
-                .load(Ordering::Relaxed, guard)
-                .as_ref()
-                .unwrap()
-                .inner
-                .write_lock()
-                .right
-                .load(Ordering::Relaxed, guard)
-                .as_ref()
-                .unwrap()
-                .height
-                .load(Ordering::Acquire) as usize
-        }
-    }
-
+impl<K: Debug, V: Debug> SeqLockAVLTree<K, V> {
     /// print tree structure
     pub fn print(&self, guard: &Guard) {
         fn print<K: Debug, V: Debug>(node: Shared<Node<K, V>>, guard: &Guard) -> String {
@@ -529,10 +493,38 @@ where
     }
 }
 
+impl<K, V> SeqLockAVLTree<K, V> {
+    /// get the height of the tree
+    pub fn get_height(&self, guard: &Guard) -> usize {
+        unsafe {
+            self.root
+                .load(Ordering::Relaxed, guard)
+                .as_ref()
+                .unwrap()
+                .inner
+                .write_lock()
+                .right
+                .load(Ordering::Relaxed, guard)
+                .as_ref()
+                .unwrap()
+                .height
+                .load(Ordering::Acquire) as usize
+        }
+    }
+}
+
+impl<K: Default, V: Default> Default for SeqLockAVLTree<K, V> {
+    fn default() -> Self {
+        Self {
+            root: Atomic::new(Node::default()),
+        }
+    }
+}
+
 impl<K, V> ConcurrentMap<K, V> for SeqLockAVLTree<K, V>
 where
-    K: Ord + Clone + Default + Debug,
-    V: Clone + Default + Debug,
+    K: Ord + Clone + Default,
+    V: Clone + Default,
 {
     fn new() -> Self {
         SeqLockAVLTree {
@@ -562,7 +554,8 @@ where
 
             // check if the current is alive now by checking parent node. If disconnected, retry
             if let Some((_, read_guard, dir)) = cursor.ancestors.last() {
-                if !read_guard.is_same_child(*dir, cursor.current, guard) {
+                if !read_guard.is_same_child(*dir, cursor.current, guard) || !read_guard.validate()
+                {
                     // Before inserting, the current is already disconnected.
                     continue;
                 }
@@ -655,6 +648,7 @@ impl<K, V> Drop for SeqLockAVLTree<K, V> {
     fn drop(&mut self) {
         let pin = pin();
         let mut nodes = vec![mem::replace(&mut self.root, Atomic::null())];
+
         while let Some(node) = nodes.pop() {
             let node = unsafe { node.into_owned() };
             let mut write_guard = node.inner.write_lock();

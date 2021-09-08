@@ -152,7 +152,7 @@ fn bench_mixed_seqlock_avl_tree() {
     let lookup_rate = 50;
     let remove_rate = 20;
     let thread_num = 4;
-    let max_time = 20; // the max time for checking repeating benches (second)
+    let max_time = 60; // the max time for checking repeating benches (second)
 
     assert_eq!(insert_rate + lookup_rate + remove_rate, 100);
 

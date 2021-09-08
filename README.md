@@ -11,7 +11,8 @@ Implement sequential, lock-based and lock-free concurrent data structures below:
 
 ## Detail
 ### Stack
-TODO: implement Treiber stack, elimination backoff stack
+- Implement [Treiber Stack](https://dominoweb.draco.res.ibm.com/58319a2ed2b1078985257003004617ef.html)
+- TODO: implement Treiber stack, elimination backoff stack
 
 ### Queue
 TODO: implement Michael-Scott queue
@@ -32,3 +33,6 @@ TODO: ?
 - https://www.cs.tau.ac.il/~shanir/concurrent-data-structures.pdf
 - http://www.vldb.org/pvldb/vol4/p795-sewall.pdf
 - https://www.cs.umanitoba.ca/~hacamero/Research/RBTreesKim.pdf
+- http://www.vldb.org/pvldb/vol11/p553-arulraj.pdf
+- https://www.cs.cmu.edu/~yihans/papers/tutorial.pdf
+- https://dominoweb.draco.res.ibm.com/58319a2ed2b1078985257003004617ef.html

@@ -68,9 +68,6 @@ impl RawSeqLock {
         seq == self.seq.load(Ordering::Relaxed)
     }
 
-    /// # Safety
-    ///
-    /// `seq` must be even.
     pub unsafe fn upgrade(&self, seq: usize) -> Result<(), ()> {
         if self
             .seq
@@ -134,18 +131,12 @@ impl<T> SeqLock<T> {
         WriteGuard { lock: self, seq }
     }
 
-    /// # Safety
-    ///
-    /// All reads from the underlying data should be atomic.
     pub unsafe fn read_lock(&self) -> ReadGuard<T> {
         let seq = self.lock.read_begin();
         ReadGuard { lock: self, seq }
     }
 
-    /// # Safety
-    ///
-    /// All reads from the underlying data should be atomic.
-    pub unsafe fn read<F, R>(&self, f: F) -> Option<R>
+    pub unsafe fn read<F, R>(&self, f: F) -> Result<R, ()>
     where
         F: FnOnce(&T) -> R,
     {
@@ -153,9 +144,9 @@ impl<T> SeqLock<T> {
         let result = f(&guard);
 
         if guard.finish() {
-            Some(result)
+            Ok(result)
         } else {
-            None
+            Err(())
         }
     }
 }

@@ -7,6 +7,7 @@ use rand::prelude::SliceRandom;
 use rand::prelude::ThreadRng;
 use rand::thread_rng;
 use rand::Rng;
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -16,7 +17,7 @@ use std::marker::PhantomData;
 use std::time::Duration;
 use std::time::Instant;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Operation {
     Insert,
     Lookup,
@@ -72,14 +73,14 @@ where
             match ops.choose(&mut rng).unwrap() {
                 Operation::Insert => {
                     // should success
-                    let data: u64 = rng.gen();
+                    let value: u64 = rng.gen();
 
                     println!(
                         "[{:0>10}] InsertNone: ({:?}, {})",
-                        i, not_existing_key, data
+                        i, not_existing_key, value
                     );
-                    assert_eq!(map.insert(&not_existing_key, data), Ok(()));
-                    assert_eq!(ref_map.insert(not_existing_key.clone(), data), None);
+                    assert_eq!(map.insert(&not_existing_key, value), Ok(()));
+                    assert_eq!(ref_map.insert(not_existing_key.clone(), value), None);
                 }
                 Operation::Lookup => {
                     // should fail
@@ -101,34 +102,34 @@ where
             match ops.choose(&mut rng).unwrap() {
                 Operation::Insert => {
                     // should fail
-                    let data: u64 = rng.gen();
+                    let value: u64 = rng.gen();
 
-                    println!("[{:0>10}] InsertSome: ({:?}, {})", i, existing_key, data);
-                    assert_eq!(map.insert(&existing_key, data), Err(data));
+                    println!("[{:0>10}] InsertSome: ({:?}, {})", i, existing_key, value);
+                    assert_eq!(map.insert(&existing_key, value), Err(value));
                 }
                 Operation::Lookup => {
                     // should success
-                    let data = ref_map.get(&existing_key);
+                    let value = ref_map.get(&existing_key);
 
                     println!(
                         "[{:0>10}] LookupSome: ({:?}, {})",
                         i,
                         existing_key,
-                        data.unwrap()
+                        value.unwrap()
                     );
-                    assert_eq!(map.lookup(&existing_key), data);
+                    assert_eq!(map.lookup(&existing_key), value);
                 }
                 Operation::Remove => {
                     // should success
-                    let data = ref_map.remove(&existing_key);
+                    let value = ref_map.remove(&existing_key);
 
                     println!(
                         "[{:0>10}] RemoveSome: ({:?}, {})",
                         i,
                         existing_key,
-                        data.unwrap()
+                        value.unwrap()
                     );
-                    assert_eq!(map.remove(&existing_key).ok(), data);
+                    assert_eq!(map.remove(&existing_key).ok(), value);
 
                     // early stop code if the remove has any problems
                     // for key in ref_map.keys().collect::<Vec<&K>>() {
@@ -206,12 +207,6 @@ struct Log<K, V> {
 
 // LogBunch: (start, end) of Insert, (start, end) of Remove, logs
 type LogBunch<K, V> = (Instant, Instant, Instant, Instant, Vec<Log<K, V>>);
-
-fn print_logs<K: Debug>(logs: &Vec<Log<K, u64>>) {
-    for log in logs {
-        println!("{:?}", log);
-    }
-}
 
 /// stress and assert on the concurrent model
 ///
@@ -339,26 +334,21 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
             }
 
             // make logs like [Insert, ..., Remove]
-            let mut fixed_logs = Vec::new();
-            let mut remove_log = None;
+            logs.sort_by(
+                |a, b| {
+                    let op = a.op.cmp(&b.op);
 
-            for log in logs {
-                match log.op {
-                    Operation::Insert => fixed_logs.insert(0, log),
-                    Operation::Lookup => fixed_logs.push(log),
-                    Operation::Remove => remove_log = Some(log),
+                    if op == Ordering::Equal {
+                        a.start.cmp(&b.start)
+                    } else {
+                        op
+                    }
                 }
-            }
-
-            if let Some(log) = remove_log {
-                fixed_logs.push(log);
-            }
-
-            logs = fixed_logs;
+            );
 
             assert!(
                 verify_logs(logs.iter().collect::<Vec<_>>()),
-                "the logs of (key, value) failed to assert:\n{:?}",
+                "The logs of (key, value) failed to assert:\n{:?}",
                 logs
             );
 
@@ -387,9 +377,7 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
             if remove.len() == 0 {
                 // the latest insertion on the key
                 if last_flag {
-                    println!("Full logs of key: {:?}, value: {:?}", key, value);
-                    print_logs(&key_logs);
-                    panic!("Cannot multiple insetion on last");
+                    panic!("({:?}, {:?}) Multiple Insertion on last:\n {:?}", key, value, key_logs);
                 }
 
                 last_flag = true;
@@ -405,7 +393,6 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
 
         if log_bunches.is_empty() {
             // There are only error logs or not. Therefore, we just check if the log is lookup(error) or remove(error).
-
             for error_log in error_logs {
                 if error_log.op == Operation::Insert {
                     panic!("If there are only error logs, they should be lookup or removal.");
@@ -486,7 +473,7 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
                         Operation::Insert => {
                             if old.3 < error_log.start && error_log.end < new.0 {
                                 panic!(
-                                    "The error log '{:?}' has contradiction on: {:?}",
+                                    "The error log {:?} has contradiction on: {:?}.",
                                     error_log, old
                                 );
                             } else {
@@ -528,7 +515,6 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
                                 );
                             } else {
                                 error_logs.pop_front();
-                                continue;
                             }
                         }
                         Operation::Lookup | Operation::Remove => {
@@ -541,7 +527,6 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
                                 );
                             } else {
                                 error_logs.pop_front();
-                                continue;
                             }
                         }
                     }
@@ -789,7 +774,7 @@ pub fn bench_concurrent_stat<M>(
             .sum::<f64>();
 
         println!(
-            "Min Time {:>8.3} ms, Avg Time: {:>8.3} ms, Max Time: {:>8.3} ms, STD: {:>8.3} ms Per Avg Thread",
+            "Min Time: {:>8.3} ms, Avg Time: {:>8.3} ms, Max Time: {:>8.3} ms, STD: {:>8.3} ms Per Avg Thread",
             thread_stat[0],
             avg,
             thread_stat[stat.len() - 1],
@@ -811,7 +796,7 @@ pub fn bench_concurrent_stat<M>(
             .sum::<f64>();
 
         println!(
-            "Min Time {:>8.3} ns, Avg Time: {:>8.3} ns, Max Time: {:>8.3} ns, STD: {:>8.3} ns Per Avg Op",
+            "Min Time: {:>8.3} ns, Avg Time: {:>8.3} ns, Max Time: {:>8.3} ns, STD: {:>8.3} ns Per Avg Op",
             op_stat[0],
             avg,
             op_stat[stat.len() - 1],
