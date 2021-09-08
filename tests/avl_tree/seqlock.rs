@@ -49,11 +49,50 @@ fn stress_seqlock_avl_tree_concurrent() {
 #[test]
 fn assert_seqlock_avl_tree_concurrent() {
     stress_concurrent::<u8, SeqLockAVLTree<_, _>>(100_000, 32, true);
+    stress_concurrent::<u64, SeqLockAVLTree<_, _>>(100_000, 32, true);
+}
+
+#[test]
+fn bench_worst_large_seqlock_avl_tree() {
+    let thread_num = 4;
+    let iter = 1_000_000 / thread_num;
+
+    let avl: SeqLockAVLTree<u64, u64> = SeqLockAVLTree::new();
+
+    let start = Instant::now();
+    let _ = thread::scope(|s| {
+        let mut threads = Vec::new();
+
+        for _ in 0..thread_num {
+            let t = s.spawn(|_| {
+                let mut rng = thread_rng();
+                let id = rng.gen_range(0..100);
+
+                for i in 0..iter {
+                    let key = id * iter + i;
+                    let _ = avl.insert(&key, key, &pin());
+                }
+            });
+
+            threads.push(t);
+        }
+
+        threads
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    println!(
+        "SeqLockAVL {} Worst Insert: {} ms",
+        thread_num * iter,
+        start.elapsed().as_millis()
+    );
+    println!("SeqLockAVL height: {}", avl.get_height(&pin()));
 }
 
 #[test]
 fn bench_large_seqlock_avl_tree() {
-    let thread_num = 16;
+    let thread_num = 4;
     let iter = 1_000_000 / thread_num;
 
     let avl: SeqLockAVLTree<u64, u64> = SeqLockAVLTree::new();
