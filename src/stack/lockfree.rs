@@ -29,7 +29,7 @@ impl<V> TreiberStack<V> {
     }
 
     pub fn is_empty(&self, guard: &Guard) -> bool {
-        self.head.load(Ordering::Acquire, guard).is_null()
+        self.head.load(Ordering::Relaxed, guard).is_null()
     }
 
     pub fn top(&self, guard: &Guard) -> Option<V>
@@ -53,7 +53,7 @@ impl<V> TreiberStack<V> {
 
             match self
                 .head
-                .compare_exchange(head, node, Ordering::AcqRel, Ordering::Acquire, guard)
+                .compare_exchange(head, node, Ordering::Release, Ordering::Relaxed, guard)
             {
                 Ok(_) => break,
                 Err(e) => node = e.new,
@@ -74,7 +74,7 @@ impl<V> TreiberStack<V> {
 
                 if self
                     .head
-                    .compare_exchange(head, next, Ordering::Release, Ordering::Relaxed, guard)
+                    .compare_exchange(head, next, Ordering::Relaxed, Ordering::Relaxed, guard)
                     .is_ok()
                 {
                     unsafe { guard.defer_destroy(head) };
