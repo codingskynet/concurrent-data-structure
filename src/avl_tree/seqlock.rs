@@ -45,17 +45,17 @@ impl<K, V> NodeInner<K, V> {
     }
 
     fn get_factor(&self, guard: &Guard) -> isize {
-        let left = self.left.load(Ordering::Relaxed, guard);
-        let right = self.right.load(Ordering::Relaxed, guard);
+        let left = self.left.load(Ordering::Acquire, guard);
+        let right = self.right.load(Ordering::Acquire, guard);
 
         let left_height = if !left.is_null() {
-            unsafe { left.as_ref().unwrap().height.load(Ordering::Acquire) }
+            unsafe { left.as_ref().unwrap().height.load(Ordering::Relaxed) }
         } else {
             0
         };
 
         let right_height = if !right.is_null() {
-            unsafe { right.as_ref().unwrap().height.load(Ordering::Acquire) }
+            unsafe { right.as_ref().unwrap().height.load(Ordering::Relaxed) }
         } else {
             0
         };
@@ -64,17 +64,17 @@ impl<K, V> NodeInner<K, V> {
     }
 
     fn get_new_height(&self, guard: &Guard) -> isize {
-        let left = self.left.load(Ordering::Relaxed, guard);
-        let right = self.right.load(Ordering::Relaxed, guard);
+        let left = self.left.load(Ordering::Acquire, guard);
+        let right = self.right.load(Ordering::Acquire, guard);
 
         let left = if !left.is_null() {
-            unsafe { left.as_ref().unwrap().height.load(Ordering::Acquire) }
+            unsafe { left.as_ref().unwrap().height.load(Ordering::Relaxed) }
         } else {
             0
         };
 
         let right = if !right.is_null() {
-            unsafe { right.as_ref().unwrap().height.load(Ordering::Acquire) }
+            unsafe { right.as_ref().unwrap().height.load(Ordering::Relaxed) }
         } else {
             0
         };
@@ -252,7 +252,7 @@ impl<K, V> Node<K, V> {
                         .as_ref()
                         .unwrap()
                         .height
-                        .store(current_guard.get_new_height(guard), Ordering::Release)
+                        .store(current_guard.get_new_height(guard), Ordering::Relaxed)
                 };
 
                 current = left_child;
@@ -286,7 +286,7 @@ impl<K, V> Node<K, V> {
                         .as_ref()
                         .unwrap()
                         .height
-                        .store(current_guard.get_new_height(guard), Ordering::Release)
+                        .store(current_guard.get_new_height(guard), Ordering::Relaxed)
                 };
 
                 current = right_child;
@@ -308,12 +308,12 @@ impl<K, V> Node<K, V> {
                 .as_ref()
                 .unwrap()
                 .height
-                .store(parent_guard.get_new_height(guard), Ordering::Release);
+                .store(parent_guard.get_new_height(guard), Ordering::Relaxed);
             current
                 .as_ref()
                 .unwrap()
                 .height
-                .store(current_guard.get_new_height(guard), Ordering::Release);
+                .store(current_guard.get_new_height(guard), Ordering::Relaxed);
         }
     }
 }
@@ -448,7 +448,7 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
                         current.inner.read(|read_guard| {
                             current
                                 .height
-                                .store(read_guard.get_new_height(guard), Ordering::Release);
+                                .store(read_guard.get_new_height(guard), Ordering::Relaxed);
                         })
                     };
 
@@ -468,9 +468,31 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
     }
 }
 
-impl<K: Debug, V: Debug> SeqLockAVLTree<K, V> {
+impl<K, V> SeqLockAVLTree<K, V> {
+    /// get the height of the tree
+    pub fn get_height(&self, guard: &Guard) -> usize {
+        unsafe {
+            self.root
+                .load(Ordering::Acquire, guard)
+                .as_ref()
+                .unwrap()
+                .inner
+                .write_lock()
+                .right
+                .load(Ordering::Acquire, guard)
+                .as_ref()
+                .unwrap()
+                .height
+                .load(Ordering::Relaxed) as usize
+        }
+    }
+
     /// print tree structure
-    pub fn print(&self, guard: &Guard) {
+    pub fn print(&self, guard: &Guard)
+    where
+        K: Debug,
+        V: Debug,
+    {
         fn print<K: Debug, V: Debug>(node: Shared<Node<K, V>>, guard: &Guard) -> String {
             if node.is_null() {
                 return "null".to_string();
@@ -490,26 +512,6 @@ impl<K: Debug, V: Debug> SeqLockAVLTree<K, V> {
         }
 
         println!("{}", print(self.root.load(Ordering::Relaxed, guard), guard));
-    }
-}
-
-impl<K, V> SeqLockAVLTree<K, V> {
-    /// get the height of the tree
-    pub fn get_height(&self, guard: &Guard) -> usize {
-        unsafe {
-            self.root
-                .load(Ordering::Relaxed, guard)
-                .as_ref()
-                .unwrap()
-                .inner
-                .write_lock()
-                .right
-                .load(Ordering::Relaxed, guard)
-                .as_ref()
-                .unwrap()
-                .height
-                .load(Ordering::Acquire) as usize
-        }
     }
 }
 
