@@ -88,15 +88,15 @@ impl<K, V> NodeInner<K, V> {
 
 impl<K, V> Default for Node<K, V>
 where
-    K: Debug + Default,
-    V: Debug + Default,
+    K: Default,
+    V: Default,
 {
     fn default() -> Self {
         Self::new(K::default(), V::default())
     }
 }
 
-impl<K: Debug, V: Debug> Node<K, V> {
+impl<K, V> Node<K, V> {
     fn new(key: K, value: V) -> Node<K, V> {
         Node {
             key,
@@ -353,11 +353,7 @@ struct Cursor<'g, K, V> {
     dir: Dir,
 }
 
-impl<'g, K, V> Cursor<'g, K, V>
-where
-    K: Debug,
-    V: Debug,
-{
+impl<'g, K, V> Cursor<'g, K, V> {
     fn new(tree: &RwLockAVLTree<K, V>, guard: &'g Guard) -> Cursor<'g, K, V> {
         let root = tree.root.load(Ordering::Relaxed, guard);
         let inner_guard = unsafe { root.as_ref().unwrap().inner.read().unwrap() };
@@ -429,8 +425,8 @@ where
 
 impl<K, V> RwLockAVLTree<K, V>
 where
-    K: Default + Ord + Clone + Debug,
-    V: Default + Debug,
+    K: Default + Ord + Clone,
+    V: Default,
 {
     /// find the last state of the cursor by the key
     ///
@@ -479,7 +475,11 @@ where
     }
 
     /// print tree structure
-    pub fn print(&self, guard: &Guard) {
+    pub fn print(&self, guard: &Guard)
+    where
+        K: Debug,
+        V: Debug,
+    {
         fn print<K: Debug, V: Debug>(node: Shared<Node<K, V>>, guard: &Guard) -> String {
             if node.is_null() {
                 return "null".to_string();
@@ -504,8 +504,8 @@ where
 
 impl<K, V> ConcurrentMap<K, V> for RwLockAVLTree<K, V>
 where
-    K: Ord + Clone + Default + Debug,
-    V: Clone + Default + Debug,
+    K: Ord + Clone + Default,
+    V: Default,
 {
     fn new() -> Self {
         RwLockAVLTree {
@@ -583,7 +583,26 @@ where
         }
     }
 
-    fn lookup(&self, key: &K, guard: &Guard) -> Option<V> {
+    fn lookup<F, R>(&self, key: &K, guard: &Guard, f: F) -> R
+    where
+        F: FnOnce(Option<&V>) -> R,
+    {
+        todo!("Need read lock upgrade to write lock")
+        // let mut cursor = self.find(key, guard);
+
+        // if cursor.dir == Dir::Eq {
+        //     let inner_guard = ManuallyDrop::into_inner(cursor.inner_guard);
+        //     return inner_guard.value.clone();
+        // } else {
+        //     unsafe { ManuallyDrop::drop(&mut cursor.inner_guard) };
+        //     return None;
+        // }
+    }
+
+    fn get(&self, key: &K, guard: &Guard) -> Option<V>
+    where
+        V: Clone,
+    {
         let mut cursor = self.find(key, guard);
 
         if cursor.dir == Dir::Eq {

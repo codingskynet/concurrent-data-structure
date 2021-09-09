@@ -24,7 +24,7 @@ fn test_rwlock_avl_tree() {
     assert_eq!(avl.get_height(&pin), f32::log2(num as f32) as usize + 1);
 
     for i in 0..num {
-        assert_eq!(avl.lookup(&i, &pin), Some(i));
+        assert_eq!(avl.get(&i, &pin), Some(i));
     }
 
     for i in 0..num {
@@ -97,7 +97,7 @@ fn bench_large_rwlock_avl_tree() {
 
                 for _ in 0..iter {
                     let key = rng.gen_range(0..(thread_num * iter * 2));
-                    let _ = avl.lookup(&key, &pin());
+                    let _ = avl.get(&key, &pin());
                 }
             });
 

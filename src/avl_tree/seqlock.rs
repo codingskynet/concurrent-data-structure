@@ -524,7 +524,7 @@ impl<K: Default, V: Default> Default for SeqLockAVLTree<K, V> {
 impl<K, V> ConcurrentMap<K, V> for SeqLockAVLTree<K, V>
 where
     K: Ord + Clone + Default,
-    V: Clone + Default,
+    V: Default,
 {
     fn new() -> Self {
         SeqLockAVLTree {
@@ -595,7 +595,34 @@ where
         }
     }
 
-    fn lookup(&self, key: &K, guard: &Guard) -> Option<V> {
+    fn lookup<F, R>(&self, key: &K, guard: &Guard, f: F) -> R
+    where
+        F: FnOnce(Option<&V>) -> R,
+    {
+        let mut cursor = Cursor::new(self, guard);
+
+        loop {
+            cursor.recover();
+            cursor.find(key, guard);
+
+            if cursor.dir == Dir::Eq {
+                let write_guard = if let Ok(write_guard) = cursor.inner_guard.clone().upgrade() {
+                    write_guard
+                } else {
+                    continue;
+                };
+
+                return f(write_guard.value.as_ref());
+            } else {
+                return f(None);
+            }
+        }
+    }
+
+    fn get(&self, key: &K, guard: &Guard) -> Option<V>
+    where
+        V: Clone,
+    {
         let mut cursor = Cursor::new(self, guard);
 
         loop {

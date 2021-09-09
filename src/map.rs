@@ -33,9 +33,18 @@ pub trait ConcurrentMap<K: Eq, V> {
 
     /// Lookup (key, value) from the map with the key.
     ///
-    /// If success, return the reference of the value.
-    /// If fail, return None.
-    fn lookup(&self, key: &K, guard: &Guard) -> Option<V>;
+    /// Execute function with the reference of the value, or None if it failed to find.
+    fn lookup<F, R>(&self, key: &K, guard: &Guard, f: F) -> R
+    where
+        F: FnOnce(Option<&V>) -> R;
+
+    /// Lookup (key, value) from the map with the key
+    ///
+    /// If success, return the copy of value
+    /// If fail, return None
+    fn get(&self, key: &K, guard: &Guard) -> Option<V>
+    where
+        V: Clone;
 
     /// Remove (key, value) from the map with the key.
     ///

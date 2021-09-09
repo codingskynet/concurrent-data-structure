@@ -1,4 +1,4 @@
-mod lockfree;
+pub mod lockfree;
 
 use std::mem;
 

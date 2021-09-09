@@ -154,6 +154,7 @@ where
 impl<K, V, M> SequentialMap<K, V> for Sequentialized<K, V, M>
 where
     K: Eq,
+    V: Clone,
     M: ConcurrentMap<K, V>,
 {
     fn new() -> Self {
@@ -171,7 +172,7 @@ where
     }
 
     fn lookup(&self, key: &K) -> Option<&V> {
-        let value = self.inner.lookup(key, &pin());
+        let value = self.inner.get(key, &pin());
 
         // HACK: temporarily save the value, and get its reference safely
         unsafe {
@@ -247,7 +248,7 @@ where
                         }
                         Operation::Lookup => {
                             let start = Instant::now();
-                            let result = match map.lookup(&key, &pin()) {
+                            let result = match map.get(&key, &pin()) {
                                 Some(value) => Ok(value),
                                 None => Err(()),
                             };
@@ -334,17 +335,15 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
             }
 
             // make logs like [Insert, ..., Remove]
-            logs.sort_by(
-                |a, b| {
-                    let op = a.op.cmp(&b.op);
+            logs.sort_by(|a, b| {
+                let op = a.op.cmp(&b.op);
 
-                    if op == Ordering::Equal {
-                        a.start.cmp(&b.start)
-                    } else {
-                        op
-                    }
+                if op == Ordering::Equal {
+                    a.start.cmp(&b.start)
+                } else {
+                    op
                 }
-            );
+            });
 
             assert!(
                 verify_logs(logs.iter().collect::<Vec<_>>()),
@@ -377,7 +376,10 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
             if remove.len() == 0 {
                 // the latest insertion on the key
                 if last_flag {
-                    panic!("({:?}, {:?}) Multiple Insertion on last:\n {:?}", key, value, key_logs);
+                    panic!(
+                        "({:?}, {:?}) Multiple Insertion on last:\n {:?}",
+                        key, value, key_logs
+                    );
                 }
 
                 last_flag = true;
@@ -851,7 +853,7 @@ where
                         let key: u64 = rng.gen_range(0..already_inserted);
 
                         let start = Instant::now();
-                        let _ = map.lookup(&key, &pin());
+                        let _ = map.get(&key, &pin());
                         duration += start.elapsed();
                     } else {
                         // remove
