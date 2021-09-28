@@ -7,12 +7,12 @@ Implement sequential, lock-based and lock-free concurrent data structures below:
 |------------|-------|-------|-------------|----------|----------------|
 | Sequential | Done  | Done  |    Done     |   Done   |                |
 | Lock-based |       |       |             |   Done   |                |
-| Lock-free  |       |       |             |          |                |
+| Lock-free  | Done  |       |             |          |                |
 
 ## Detail
 ### Stack
-- Implement [Treiber Stack](https://dominoweb.draco.res.ibm.com/58319a2ed2b1078985257003004617ef.html)
-- TODO: implement Treiber stack, elimination backoff stack
+- Implement [Treiber's Stack](https://dominoweb.draco.res.ibm.com/58319a2ed2b1078985257003004617ef.html)
+- Implement [Elimination-Backoff Stack](https://people.csail.mit.edu/shanir/publications/Lock_Free.pdf)
 
 ### Queue
 TODO: implement Michael-Scott queue
@@ -21,7 +21,7 @@ TODO: implement Michael-Scott queue
 TODO: implement Harris linked list
 
 ### AVL Tree
-- Implement simple concurrent AVL Tree with RwLock(crossbeam_utils::sync::ShardedLock), SeqLock
+- Implement concurrent AVL Tree with RwLock(crossbeam_utils::sync::ShardedLock), SeqLock
 
 ### Red-Black Tree
 TODO: ?
@@ -36,3 +36,4 @@ TODO: ?
 - http://www.vldb.org/pvldb/vol11/p553-arulraj.pdf
 - https://www.cs.cmu.edu/~yihans/papers/tutorial.pdf
 - https://dominoweb.draco.res.ibm.com/58319a2ed2b1078985257003004617ef.html
+- https://people.csail.mit.edu/shanir/publications/Lock_Free.pdf

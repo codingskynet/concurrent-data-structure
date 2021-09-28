@@ -23,7 +23,6 @@ pub struct RwLockAVLTree<K, V> {
 struct Node<K, V> {
     key: K,
     height: AtomicIsize,
-    /// rwlock for shared mutable area
     inner: ShardedLock<NodeInner<K, V>>,
 }
 
@@ -587,16 +586,19 @@ where
     where
         F: FnOnce(Option<&V>) -> R,
     {
-        todo!("Need read lock upgrade to write lock")
-        // let mut cursor = self.find(key, guard);
+        let mut cursor = self.find(key, guard);
 
-        // if cursor.dir == Dir::Eq {
-        //     let inner_guard = ManuallyDrop::into_inner(cursor.inner_guard);
-        //     return inner_guard.value.clone();
-        // } else {
-        //     unsafe { ManuallyDrop::drop(&mut cursor.inner_guard) };
-        //     return None;
-        // }
+        if cursor.dir == Dir::Eq {
+            unsafe {
+                ManuallyDrop::drop(&mut cursor.inner_guard);
+            }
+            let current = unsafe { cursor.current.as_ref().unwrap() };
+            let write_guard = current.inner.write().unwrap();
+
+            return f(write_guard.value.as_ref());
+        } else {
+            return f(None);
+        }
     }
 
     fn get(&self, key: &K, guard: &Guard) -> Option<V>

@@ -4,8 +4,6 @@
 use core::mem;
 use core::ops::Deref;
 use core::sync::atomic::{fence, AtomicUsize, Ordering};
-use std::cell::UnsafeCell;
-use std::ops::DerefMut;
 
 use crossbeam_utils::Backoff;
 
@@ -90,7 +88,7 @@ impl RawSeqLock {
 #[derive(Debug)]
 pub struct SeqLock<T> {
     lock: RawSeqLock,
-    data: UnsafeCell<T>,
+    data: T,
 }
 
 #[derive(Debug)]
@@ -122,10 +120,6 @@ impl<T> SeqLock<T> {
         }
     }
 
-    pub fn into_inner(self) -> T {
-        self.data.into_inner()
-    }
-
     pub fn write_lock(&self) -> WriteGuard<T> {
         let seq = self.lock.write_lock();
         WriteGuard { lock: self, seq }
@@ -155,13 +149,7 @@ impl<'s, T> Deref for WriteGuard<'s, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { &*self.lock.data.get() }
-    }
-}
-
-impl<'s, T> DerefMut for WriteGuard<'s, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.lock.data.get() }
+        &self.lock.data
     }
 }
 
@@ -175,7 +163,7 @@ impl<'s, T> Deref for ReadGuard<'s, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { &*self.lock.data.get() }
+        &self.lock.data
     }
 }
 

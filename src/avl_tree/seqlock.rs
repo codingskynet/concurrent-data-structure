@@ -1,4 +1,4 @@
-use crossbeam_epoch::pin;
+use crossbeam_epoch::unprotected;
 use crossbeam_epoch::Atomic;
 use crossbeam_epoch::Guard;
 use crossbeam_epoch::Owned;
@@ -25,9 +25,30 @@ struct Node<K, V> {
 }
 
 struct NodeInner<K, V> {
-    value: Option<V>,
+    value: Atomic<V>,
     left: Atomic<Node<K, V>>,
     right: Atomic<Node<K, V>>,
+}
+
+impl<K, V> Drop for NodeInner<K, V> {
+    fn drop(&mut self) {
+        unsafe {
+            let value = self.value.load(Ordering::Relaxed, unprotected());
+            if !value.is_null() {
+                drop(value.into_owned());
+            }
+
+            let left = self.left.load(Ordering::Relaxed, unprotected());
+            if !left.is_null() {
+                drop(left.into_owned());
+            }
+
+            let right = self.right.load(Ordering::Relaxed, unprotected());
+            if !right.is_null() {
+                drop(right.into_owned());
+            }
+        }
+    }
 }
 
 impl<K, V> NodeInner<K, V> {
@@ -95,7 +116,7 @@ impl<K, V> Node<K, V> {
             key,
             height: AtomicIsize::new(1),
             inner: SeqLock::new(NodeInner {
-                value: Some(value),
+                value: Atomic::new(value),
                 left: Atomic::null(),
                 right: Atomic::null(),
             }),
@@ -156,7 +177,7 @@ impl<K, V> Node<K, V> {
         let read_guard = unsafe { current_ref.inner.read_lock() };
 
         // only already logically removed node can be cleaned up
-        if read_guard.value.is_none() {
+        if read_guard.value.load(Ordering::Relaxed, guard).is_null() {
             let (left, right) = (
                 read_guard.left.load(Ordering::Relaxed, guard).is_null(),
                 read_guard.right.load(Ordering::Relaxed, guard).is_null(),
@@ -498,17 +519,17 @@ impl<K, V> SeqLockAVLTree<K, V> {
     pub fn get_height(&self, guard: &Guard) -> usize {
         unsafe {
             self.root
-                .load(Ordering::Relaxed, guard)
+                .load(Ordering::Acquire, guard)
                 .as_ref()
                 .unwrap()
                 .inner
                 .write_lock()
                 .right
-                .load(Ordering::Relaxed, guard)
+                .load(Ordering::Acquire, guard)
                 .as_ref()
                 .unwrap()
                 .height
-                .load(Ordering::Acquire) as usize
+                .load(Ordering::Relaxed) as usize
         }
     }
 }
@@ -533,7 +554,6 @@ where
     }
 
     fn insert(&self, key: &K, value: V, guard: &Guard) -> Result<(), V> {
-        let node = Node::new(key.clone(), value);
         let mut cursor = Cursor::new(self, guard);
 
         loop {
@@ -541,14 +561,14 @@ where
             cursor.recover();
             cursor.find(key, guard);
 
-            let mut write_guard = if let Ok(guard) = cursor.inner_guard.clone().upgrade() {
+            let write_guard = if let Ok(guard) = cursor.inner_guard.clone().upgrade() {
                 guard
             } else {
                 continue;
             };
 
-            if cursor.dir == Dir::Eq && write_guard.value.is_some() {
-                let value = node.inner.into_inner().value.unwrap();
+            if cursor.dir == Dir::Eq && !write_guard.value.load(Ordering::Relaxed, guard).is_null()
+            {
                 return Err(value);
             }
 
@@ -567,6 +587,7 @@ where
                         continue; // some thread already writed. Retry
                     }
 
+                    let node = Node::new(key.clone(), value);
                     write_guard.left.store(Owned::new(node), Ordering::Relaxed);
                 }
                 Dir::Right => {
@@ -574,16 +595,17 @@ where
                         continue; // some thread already writed. Retry
                     }
 
+                    let node = Node::new(key.clone(), value);
                     write_guard.right.store(Owned::new(node), Ordering::Relaxed);
                 }
                 Dir::Eq => {
-                    let value = node.inner.into_inner().value.unwrap();
-
-                    if write_guard.value.is_some() {
+                    if !write_guard.value.load(Ordering::Relaxed, guard).is_null() {
                         return Err(value);
                     }
 
-                    write_guard.value = Some(value);
+                    write_guard
+                        .value
+                        .swap(Owned::new(value), Ordering::Release, guard);
                 }
             }
 
@@ -612,7 +634,7 @@ where
                     continue;
                 };
 
-                return f(write_guard.value.as_ref());
+                return unsafe { f(write_guard.value.load(Ordering::Acquire, guard).as_ref()) };
             } else {
                 return f(None);
             }
@@ -630,7 +652,17 @@ where
             cursor.find(key, guard);
 
             if cursor.dir == Dir::Eq {
-                let value = cursor.inner_guard.value.clone();
+                let value = if let Some(value) = unsafe {
+                    cursor
+                        .inner_guard
+                        .value
+                        .load(Ordering::Acquire, guard)
+                        .as_ref()
+                } {
+                    Some(value.clone())
+                } else {
+                    None
+                };
 
                 if !cursor.inner_guard.validate() {
                     continue;
@@ -654,41 +686,30 @@ where
                 return Err(());
             }
 
-            let mut write_guard = if let Ok(guard) = cursor.inner_guard.clone().upgrade() {
+            let write_guard = if let Ok(guard) = cursor.inner_guard.clone().upgrade() {
                 guard
             } else {
                 continue;
             };
 
-            if let Some(value) = (*write_guard).value.take() {
-                drop(write_guard);
-                Cursor::repair(cursor, guard);
-                return Ok(value);
-            } else {
+            let value = write_guard
+                .value
+                .swap(Shared::null(), Ordering::Acquire, guard);
+
+            if value.is_null() {
                 return Err(());
             }
+
+            drop(write_guard);
+            Cursor::repair(cursor, guard);
+
+            return unsafe { Ok(*(value.into_owned().into_box())) };
         }
     }
 }
 
 impl<K, V> Drop for SeqLockAVLTree<K, V> {
     fn drop(&mut self) {
-        let pin = pin();
-        let mut nodes = vec![mem::replace(&mut self.root, Atomic::null())];
-
-        while let Some(node) = nodes.pop() {
-            let node = unsafe { node.into_owned() };
-            let mut write_guard = node.inner.write_lock();
-
-            let left = mem::replace(&mut write_guard.left, Atomic::null());
-            let right = mem::replace(&mut write_guard.right, Atomic::null());
-
-            if !left.load(Ordering::Relaxed, &pin).is_null() {
-                nodes.push(left);
-            }
-            if !right.load(Ordering::Relaxed, &pin).is_null() {
-                nodes.push(right);
-            }
-        }
+        unsafe { drop(mem::replace(&mut self.root, Atomic::null()).into_owned()) }
     }
 }
