@@ -51,10 +51,13 @@ impl<V> TreiberStack<V> {
             let head = self.head.load(Ordering::Relaxed, guard);
             node.next.store(head, Ordering::Relaxed);
 
-            match self
-                .head
-                .compare_exchange(head, node, Ordering::Release, Ordering::Relaxed, guard)
-            {
+            match self.head.compare_exchange(
+                head,
+                node,
+                Ordering::Release,
+                Ordering::Relaxed,
+                guard,
+            ) {
                 Ok(_) => break,
                 Err(e) => node = e.new,
             }
