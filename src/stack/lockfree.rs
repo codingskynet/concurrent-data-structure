@@ -1,8 +1,8 @@
-use std::{mem::ManuallyDrop, ptr, sync::atomic::Ordering, time::Duration};
+use std::{mem::ManuallyDrop, ptr, sync::atomic::Ordering, thread, time::Duration};
 
-use crossbeam_epoch::{Atomic, Guard, Owned};
+use crossbeam_epoch::{Atomic, Guard, Owned, Shared};
 use crossbeam_utils::Backoff;
-use rand::{Rng, thread_rng};
+use rand::{thread_rng, Rng};
 
 pub trait ConcurrentStack<V> {
     fn new() -> Self;
@@ -117,9 +117,17 @@ impl<V> ConcurrentStack<V> for TreiberStack<V> {
 
 const ELIM_SIZE: usize = 10;
 const ELIM_DELAY: Duration = Duration::from_millis(10);
+
+/// Elimination-Backoff Stack
+///
+/// the tag of slot
+/// 0: empty slot
+/// 1: push slot
+/// 2: pop slot
+/// 3: paired slot
 pub struct EBStack<V> {
     stack: TreiberStack<V>,
-    slots: [Atomic<V>; ELIM_SIZE],
+    slots: [Atomic<Node<V>>; ELIM_SIZE],
 }
 
 #[inline]
@@ -137,10 +145,53 @@ impl<V> EBStack<V> {
     fn try_push(&self, node: Owned<Node<V>>, guard: &Guard) -> Result<(), Owned<Node<V>>> {
         let node = match self.stack.try_push(node, guard) {
             Ok(_) => return Ok(()),
-            Err(node) => node,
+            Err(node) => node.into_shared(guard),
         };
 
-        Err(node)
+        let slot = unsafe { self.slots.get_unchecked(rand_idx()) };
+        let s = slot.load(Ordering::Relaxed, guard);
+        let tag = s.tag();
+
+        let result = match tag {
+            0 => slot.compare_exchange(
+                s,
+                node.with_tag(1),
+                Ordering::Release,
+                Ordering::Relaxed,
+                guard,
+            ),
+            2 => slot.compare_exchange(
+                s,
+                node.with_tag(3),
+                Ordering::Release,
+                Ordering::Relaxed,
+                guard,
+            ),
+            _ => return unsafe { Err(node.into_owned()) },
+        };
+
+        if let Err(e) = result {
+            return unsafe { Err(e.new.into_owned()) };
+        }
+
+        thread::sleep(ELIM_DELAY);
+
+        let s = slot.load(Ordering::Relaxed, guard);
+
+        if tag == 0 && s.tag() == 1 {
+            return match slot.compare_exchange(
+                node.with_tag(1),
+                Shared::null(),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+                guard,
+            ) {
+                Ok(_) => unsafe { Err(s.into_owned()) },
+                Err(_) => Ok(()),
+            };
+        }
+
+        Ok(())
     }
 
     fn try_pop(&self, guard: &Guard) -> Result<Option<V>, ()> {
@@ -148,7 +199,44 @@ impl<V> EBStack<V> {
             return Ok(value);
         }
 
-        Err(())
+        let slot = unsafe { self.slots.get_unchecked(rand_idx()) };
+        let s = slot.load(Ordering::Relaxed, guard);
+
+        let result = match s.tag() {
+            0 => slot.compare_exchange(
+                s,
+                s.with_tag(2),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+                guard,
+            ),
+            1 => slot.compare_exchange(
+                s,
+                s.with_tag(3),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+                guard,
+            ),
+            _ => return Err(()),
+        };
+
+        if result.is_err() {
+            return Err(());
+        }
+
+        thread::sleep(ELIM_DELAY);
+
+        let s = slot.load(Ordering::Acquire, guard);
+
+        if s.tag() == 3 {
+            slot.store(Shared::null(), Ordering::Relaxed);
+            let node = unsafe { s.into_owned() };
+            let value = ManuallyDrop::into_inner(node.into_box().value);
+            Ok(Some(value))
+        } else {
+            slot.store(Shared::null(), Ordering::Relaxed);
+            Err(())
+        }
     }
 }
 
