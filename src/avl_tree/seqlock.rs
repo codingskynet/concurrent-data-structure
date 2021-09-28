@@ -654,18 +654,15 @@ where
             cursor.find(key, guard);
 
             if cursor.dir == Dir::Eq {
-                let value = if let Some(value) = unsafe {
+                let value = unsafe {
                     cursor
                         .inner_guard
                         .value
                         .load(Ordering::Acquire, guard)
                         .as_ref()
-                } {
-                    Some(value.clone())
-                } else {
-                    None
+                        .cloned()
                 };
-
+                
                 if !cursor.inner_guard.validate() {
                     continue;
                 }
