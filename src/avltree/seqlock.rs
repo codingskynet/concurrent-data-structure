@@ -6,6 +6,7 @@ use crossbeam_epoch::Shared;
 use std::cmp::max;
 use std::fmt::Debug;
 use std::mem;
+use std::mem::ManuallyDrop;
 use std::sync::atomic::AtomicIsize;
 use std::sync::atomic::Ordering;
 
@@ -13,16 +14,6 @@ use crate::lock::seqlock::ReadGuard;
 use crate::lock::seqlock::SeqLock;
 use crate::lock::seqlock::WriteGuard;
 use crate::map::ConcurrentMap;
-
-pub struct SeqLockAVLTree<K, V> {
-    root: Atomic<Node<K, V>>,
-}
-
-struct Node<K, V> {
-    key: K,
-    height: AtomicIsize,
-    inner: SeqLock<NodeInner<K, V>>,
-}
 
 struct NodeInner<K, V> {
     value: Atomic<V>,
@@ -102,6 +93,12 @@ impl<K, V> NodeInner<K, V> {
 
         max(left, right) + 1
     }
+}
+
+struct Node<K, V> {
+    key: K,
+    height: AtomicIsize,
+    inner: SeqLock<NodeInner<K, V>>,
 }
 
 impl<K: Default, V: Default> Default for Node<K, V> {
@@ -224,6 +221,7 @@ impl<K, V> Node<K, V> {
             }
         }
 
+        read_guard.forget();
         false
     }
 
@@ -236,9 +234,11 @@ impl<K, V> Node<K, V> {
         guard: &'g Guard,
     ) {
         if (-1..=1).contains(&parent_read_guard.get_factor(guard)) {
+            parent_read_guard.forget();
             return;
         }
 
+        parent_read_guard.forget();
         let root_guard = unsafe { root.as_ref().unwrap().inner.write_lock() };
 
         if !root_guard.is_same_child(*root_dir, parent, guard) {
@@ -351,8 +351,18 @@ struct Cursor<'g, K, V> {
     current: Shared<'g, Node<K, V>>,
     /// the read lock for current node's inner
     /// It keeps current node's inner and is for hand-over-hand locking.
-    inner_guard: ReadGuard<'g, NodeInner<K, V>>,
+    inner_guard: ManuallyDrop<ReadGuard<'g, NodeInner<K, V>>>,
     dir: Dir,
+}
+
+impl<'g, K, V> Drop for Cursor<'g, K, V> {
+    fn drop(&mut self) {
+        unsafe { ManuallyDrop::take(&mut self.inner_guard).forget() };
+
+        while let Some((_, guard, _)) = self.ancestors.pop() {
+            guard.forget();
+        }
+    }
 }
 
 impl<'g, K: Ord, V> Cursor<'g, K, V> {
@@ -363,7 +373,7 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
         let cursor = Cursor {
             ancestors: vec![],
             current: root,
-            inner_guard,
+            inner_guard: ManuallyDrop::new(inner_guard),
             dir: Dir::Right,
         };
 
@@ -398,19 +408,19 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
     /// move to parent until self.inner_guard is valid
     fn recover(&mut self) {
         while let Some((parent, parent_read_guard, dir)) = self.ancestors.pop() {
-            if parent_read_guard.validate() {
+            if parent_read_guard.validate() || self.ancestors.is_empty() {
+                // if parent is root, then we should use its guard
                 self.current = parent;
-                self.inner_guard = parent_read_guard;
+
+                let old_guard =
+                    mem::replace(&mut self.inner_guard, ManuallyDrop::new(parent_read_guard));
+                ManuallyDrop::into_inner(old_guard).forget();
+
                 self.dir = dir;
                 break;
             }
 
-            // now parent is root
-            if self.ancestors.is_empty() {
-                self.current = parent;
-                self.inner_guard = parent_read_guard;
-                self.dir = dir;
-            }
+            parent_read_guard.forget();
         }
 
         self.inner_guard.restart();
@@ -450,8 +460,9 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
 
             // replace with current's read guard, then store parent_guard in cursor
             let parent = mem::replace(&mut self.current, next);
-            let parent_guard = mem::replace(&mut self.inner_guard, next_guard);
-            self.ancestors.push((parent, parent_guard, self.dir));
+            let parent_guard = mem::replace(&mut self.inner_guard, ManuallyDrop::new(next_guard));
+            self.ancestors
+                .push((parent, ManuallyDrop::into_inner(parent_guard), self.dir));
 
             return Ok(());
         }
@@ -480,13 +491,18 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
 
                 // the cursor.current is alive, so try rebalancing
                 if let Some(root_pair) = cursor.ancestors.last() {
-                    Node::try_rebalance((parent, parent_read_guard), root_pair, guard);
+                    Node::try_rebalance((parent, parent_read_guard.clone()), root_pair, guard);
                 }
             }
 
+            parent_read_guard.forget();
             cursor.current = parent;
         }
     }
+}
+
+pub struct SeqLockAVLTree<K, V> {
+    root: Atomic<Node<K, V>>,
 }
 
 impl<K, V> SeqLockAVLTree<K, V> {
@@ -563,7 +579,9 @@ where
             cursor.recover();
             cursor.find(key, guard);
 
-            let write_guard = if let Ok(guard) = cursor.inner_guard.clone().upgrade() {
+            let inner_guard = ManuallyDrop::into_inner(cursor.inner_guard.clone());
+
+            let write_guard = if let Ok(guard) = inner_guard.upgrade() {
                 guard
             } else {
                 continue;
@@ -630,7 +648,8 @@ where
             cursor.find(key, guard);
 
             if cursor.dir == Dir::Eq {
-                let write_guard = if let Ok(write_guard) = cursor.inner_guard.clone().upgrade() {
+                let inner_guard = ManuallyDrop::into_inner(cursor.inner_guard.clone());
+                let write_guard = if let Ok(write_guard) = inner_guard.upgrade() {
                     write_guard
                 } else {
                     continue;
@@ -685,7 +704,8 @@ where
                 return Err(());
             }
 
-            let write_guard = if let Ok(guard) = cursor.inner_guard.clone().upgrade() {
+            let inner_guard = ManuallyDrop::into_inner(cursor.inner_guard.clone());
+            let write_guard = if let Ok(guard) = inner_guard.upgrade() {
                 guard
             } else {
                 continue;

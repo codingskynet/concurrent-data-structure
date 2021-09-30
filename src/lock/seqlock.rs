@@ -176,6 +176,12 @@ impl<'s, T> Clone for ReadGuard<'s, T> {
     }
 }
 
+impl<'s, T> Drop for ReadGuard<'s, T> {
+    fn drop(&mut self) {
+        panic!("For safety, seqlock::ReadGuard cannot be dropped. Use finish or forget.");
+    }
+}
+
 impl<'s, T> ReadGuard<'s, T> {
     pub fn validate(&self) -> bool {
         self.lock.lock.read_validate(self.seq)
@@ -189,6 +195,11 @@ impl<'s, T> ReadGuard<'s, T> {
         let result = self.lock.lock.read_validate(self.seq);
         mem::forget(self);
         result
+    }
+
+    /// Just forget ReadGuard without validation. Carefully use it only if it does not need to be validated.
+    pub fn forget(self) {
+        mem::forget(self);
     }
 
     pub fn upgrade(self) -> Result<WriteGuard<'s, T>, ()> {
