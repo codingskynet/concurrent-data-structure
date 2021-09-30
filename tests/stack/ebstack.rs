@@ -1,4 +1,4 @@
-use cds::stack::lockfree::{ConcurrentStack, EBStack};
+use cds::stack::{ConcurrentStack, EBStack};
 use crossbeam_epoch::pin;
 use crossbeam_utils::thread::scope;
 

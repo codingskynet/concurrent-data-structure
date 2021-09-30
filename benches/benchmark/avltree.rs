@@ -1,6 +1,6 @@
 use crate::util::map::bench_sequential;
 use crate::util::map::bench_sequential_reference;
-use cds::avl_tree::AVLTree;
+use cds::avltree::AVLTree;
 use criterion::{criterion_group, Criterion};
 
 fn bench_avl_tree(c: &mut Criterion) {

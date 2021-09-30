@@ -1,5 +1,8 @@
-pub mod rwlock;
-pub mod seqlock;
+mod rwlock;
+mod seqlock;
+
+pub use rwlock::RwLockAVLTree;
+pub use seqlock::SeqLockAVLTree;
 
 use crate::map::SequentialMap;
 use std::{

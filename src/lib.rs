@@ -1,4 +1,4 @@
-pub mod avl_tree;
+pub mod avltree;
 pub mod linkedlist;
 mod lock;
 pub mod map;

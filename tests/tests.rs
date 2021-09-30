@@ -5,7 +5,7 @@ use std::{
 
 use rand::{prelude::SliceRandom, thread_rng, Rng};
 
-mod avl_tree;
+mod avltree;
 mod linkedlist;
 mod queue;
 mod stack;

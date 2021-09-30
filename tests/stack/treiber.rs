@@ -1,4 +1,4 @@
-use cds::stack::lockfree::{ConcurrentStack, TreiberStack};
+use cds::stack::{ConcurrentStack, TreiberStack};
 use crossbeam_epoch::pin;
 
 #[test]

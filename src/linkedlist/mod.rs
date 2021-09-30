@@ -1,27 +1,23 @@
 use crate::map::SequentialMap;
 
 // simple sequential linked list
-pub struct LinkedList<K: Default + Eq + Clone, V: Default> {
+pub struct LinkedList<K, V> {
     head: Node<K, V>, // dummy node with key = Default, but the key is not considered on algorithm
 }
 
-struct Node<K: Eq, V> {
+struct Node<K, V> {
     key: K,
     value: V,
     next: Option<Box<Node<K, V>>>,
 }
 
-impl<K: Default + Eq, V: Default> Default for Node<K, V> {
+impl<K: Default, V: Default> Default for Node<K, V> {
     fn default() -> Self {
-        Node {
-            key: K::default(),
-            value: V::default(),
-            next: None,
-        }
+        Self::new(K::default(), V::default())
     }
 }
 
-impl<K: Eq, V> Node<K, V> {
+impl<K, V> Node<K, V> {
     fn new(key: K, value: V) -> Node<K, V> {
         Node {
             key,
@@ -31,7 +27,11 @@ impl<K: Eq, V> Node<K, V> {
     }
 }
 
-impl<K: Default + Eq + Clone, V: Default> SequentialMap<K, V> for LinkedList<K, V> {
+impl<K, V> SequentialMap<K, V> for LinkedList<K, V>
+where
+    K: Default + Eq + Clone,
+    V: Default,
+{
     fn new() -> LinkedList<K, V> {
         LinkedList {
             head: Node::default(),
@@ -100,7 +100,7 @@ impl<K: Default + Eq + Clone, V: Default> SequentialMap<K, V> for LinkedList<K, 
     }
 }
 
-impl<K: Default + Eq + Clone, V: Default> Drop for LinkedList<K, V> {
+impl<K, V> Drop for LinkedList<K, V> {
     fn drop(&mut self) {
         let mut node = self.head.next.take();
 

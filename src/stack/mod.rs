@@ -1,4 +1,8 @@
-pub mod lockfree;
+mod lockfree;
+
+pub use lockfree::ConcurrentStack;
+pub use lockfree::EBStack;
+pub use lockfree::TreiberStack;
 
 use std::mem;
 

@@ -4,7 +4,7 @@ mod seqlock;
 use std::{collections::BTreeMap, time::Instant};
 
 use crate::util::map::stress_sequential;
-use cds::{avl_tree::AVLTree, map::SequentialMap};
+use cds::{avltree::AVLTree, map::SequentialMap};
 use rand::{thread_rng, Rng};
 
 #[test]

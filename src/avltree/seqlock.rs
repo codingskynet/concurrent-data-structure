@@ -662,7 +662,7 @@ where
                         .as_ref()
                         .cloned()
                 };
-                
+
                 if !cursor.inner_guard.validate() {
                     continue;
                 }
