@@ -1,83 +1,138 @@
-use std::{cmp::Ordering, mem::{self, MaybeUninit}, ops::DerefMut, ptr::{self, NonNull}};
+use std::{
+    cmp::Ordering,
+    mem,
+    ptr::NonNull,
+};
 
 use crate::map::SequentialMap;
 
 const B_MAX_NODES: usize = 2;
+const B_MID_INDEX: usize = B_MAX_NODES / 2;
 
 // TODO: optimize with MaybeUninit
 struct Node<K, V> {
     size: usize,
-    keys: [Option<K>; B_MAX_NODES],
-    values: [Option<V>; B_MAX_NODES],
-    edges: [Option<Box<Node<K, V>>>; B_MAX_NODES + 1],
+    keys: Vec<K>, // keys/values max size: B_MAX_NODES + 1 for violating invariant
+    values: Vec<V>,
+    edges: Vec<Box<Node<K, V>>>, // max size: B_MAX_NODES + 2
 }
 
 impl<K, V> Node<K, V> {
     fn new() -> Self {
         Self {
             size: 0,
-            keys: Default::default(),
-            values: Default::default(),
-            edges: Default::default(),
+            keys: Vec::with_capacity(B_MAX_NODES + 1),
+            values: Vec::with_capacity(B_MAX_NODES + 1),
+            edges: Vec::with_capacity(B_MAX_NODES + 2),
         }
     }
 }
 
-unsafe fn slice_insert<T>(ptr: &mut [T], index: usize, value: T) {
-    let size = ptr.len();
-    debug_assert!(size > index);
+// unsafe fn slice_insert<T>(ptr: &mut [T], index: usize, value: T) {
+//     let size = ptr.len();
+//     debug_assert!(size > index);
 
-    let ptr = ptr.as_mut_ptr();
+//     let ptr = ptr.as_mut_ptr();
 
-    if size > index + 1{
-        ptr::copy(ptr.add(index), ptr.add(index + 1), size - index - 1);
-    }
+//     if size > index + 1 {
+//         ptr::copy(ptr.add(index), ptr.add(index + 1), size - index - 1);
+//     }
 
-    *ptr.add(index) = value;
-}
+//     *ptr.add(index) = value;
+// }
 
-unsafe fn slice_remove<T>(ptr: &mut [T], index: usize) -> T {
-    let size = ptr.len();
-    debug_assert!(size > index);
+// unsafe fn slice_remove<T>(ptr: &mut [T], index: usize) -> T {
+//     let size = ptr.len();
+//     debug_assert!(size > index);
 
-    let ptr = ptr.as_mut_ptr();
-    let value = ptr::read(ptr.add(index));
+//     let ptr = ptr.as_mut_ptr();
+//     let value = ptr::read(ptr.add(index));
 
-    if size > index + 1 {
-        ptr::copy(ptr.add(index + 1), ptr.add(index), size - index - 1);
-    }
+//     if size > index + 1 {
+//         ptr::copy(ptr.add(index + 1), ptr.add(index), size - index - 1);
+//     }
 
-    value
+//     value
+// }
+
+enum InsertResult<K, V> {
+    Fitted,
+    Splitted {
+        // left: NonNull<Node<K, V>>,
+        parent: (K, V),
+        right: Box<Node<K, V>>,
+    },
 }
 
 impl<K, V> Node<K, V> {
-    fn insert(&mut self, edge_index: usize, key: K, value: V) {
-        if self.size < B_MAX_NODES {
-            self.size += 1;
+    fn insert_leaf(&mut self, edge_index: usize, key: K, value: V) -> InsertResult<K, V> {
+        self.size += 1;
 
-            unsafe {
-                slice_insert(self.keys.get_unchecked_mut(..self.size), edge_index, Some(key));
-                slice_insert(self.values.get_unchecked_mut(..self.size), edge_index, Some(value));
-            }
-        } else {
-            // split & merge to maintain the invariant of B-Tree
-            todo!()
+        self.keys.insert(edge_index, key);
+        self.values.insert(edge_index, value);
+
+        if self.size <= B_MAX_NODES {
+            return InsertResult::Fitted;
         }
+
+        // violate B-Tree invariant, then split node
+        let mut node = Box::new(Node::new());
+        self.size = B_MAX_NODES / 2;
+        node.size = B_MAX_NODES / 2;
+        node.keys = self.keys.split_off(B_MID_INDEX + 1);
+        node.values = self.values.split_off(B_MID_INDEX + 1);
+
+        let mid_key = node.keys.pop().unwrap();
+        let mid_value = node.values.pop().unwrap();
+
+       InsertResult::Splitted {
+           parent: (mid_key, mid_value),
+           right: node,
+       }
+    }
+
+    fn insert_inner(&mut self, edge_index: usize, key: K, value: V, edge: Box<Node<K, V>>) -> InsertResult<K, V> {
+        self.size += 1;
+
+        self.keys.insert(edge_index, key);
+        self.values.insert(edge_index, value);
+        self.edges.insert(edge_index + 1, edge);
+
+        if self.size <= B_MAX_NODES {
+            return InsertResult::Fitted;
+        }
+
+        // violate B-tree invariant, then split node with splitting edges
+        let mut node = Box::new(Node::new());
+        self.size = B_MAX_NODES / 2;
+        node.size = B_MAX_NODES / 2;
+        node.keys = self.keys.split_off(B_MID_INDEX + 1);
+        node.values = self.values.split_off(B_MID_INDEX + 1);
+        node.edges = self.edges.split_off(B_MID_INDEX + 1);
+
+        let mid_key = node.keys.pop().unwrap();
+        let mid_value = node.values.pop().unwrap();
+
+       InsertResult::Splitted {
+           parent: (mid_key, mid_value),
+           right: node,
+       }
     }
 
     fn remove(&mut self, value_index: usize) -> V {
-        if self.size > B_MAX_NODES / 2 {
-            unsafe {
-                let _ = slice_remove(self.keys.get_unchecked_mut(..self.size), value_index);
-                let value = slice_remove(self.values.get_unchecked_mut(..self.size), value_index);
+        todo!()
+        // if self.size > B_MAX_NODES / 2 {
+        //     unsafe {
+        //         let _ = slice_remove(self.keys.get_unchecked_mut(..self.size), value_index);
+        //         let value = slice_remove(self.values.get_unchecked_mut(..self.size), value_index);
 
-                self.size -= 1;
-                value.unwrap()
-            }
-        } else {
-            // merge & split to maintain the invariant of B-Tree
-            todo!()
-        }
+        //         self.size -= 1;
+        //         value.unwrap()
+        //     }
+        // } else {
+        //     // merge & split to maintain the invariant of B-Tree
+        //     todo!()
+        // }
     }
 }
 
@@ -106,8 +161,8 @@ impl<K: Ord, V> Cursor<K, V> {
     fn search_in_node(self, key: &K) -> Self {
         let node = unsafe { self.current.as_ref() };
 
-        for (index, k) in node.keys[..node.size].iter().enumerate() {
-            match key.cmp(k.as_ref().unwrap()) {
+        for (index, k) in node.keys.iter().enumerate() {
+            match key.cmp(k) {
                 Ordering::Less => {
                     return Self {
                         result: SearchResult::Descent { edge_index: index },
@@ -133,7 +188,7 @@ impl<K: Ord, V> Cursor<K, V> {
     }
 
     fn descend(mut self, edge_index: usize) -> Self {
-        match unsafe { self.current.as_mut().edges[edge_index].as_mut() } {
+        match unsafe { self.current.as_mut().edges.get_mut(edge_index) } {
             Some(node) => {
                 let parent = mem::replace(&mut self.current, NonNull::new(node.as_mut()).unwrap());
                 self.ancestors.push((parent, edge_index));
@@ -148,6 +203,47 @@ impl<K: Ord, V> Cursor<K, V> {
                 ..self
             },
         }
+    }
+
+    /// insert (key, value) and return root of the tree
+    fn insert(mut self, edge_index: usize, key: K, value: V) -> NonNull<Node<K, V>> {
+        let mut current = unsafe { self.current.as_mut() };
+
+        let mut splitted = match current.insert_leaf(edge_index, key, value) {
+            InsertResult::Fitted => {
+                self.ancestors.push((self.current, edge_index));
+                return self.ancestors.first().unwrap().0;
+            },
+            InsertResult::Splitted { parent, right } => (parent, right),
+        };
+
+        // split & merge to maintain the invariant of B-Tree
+        while let Some((mut ancestor, index)) = self.ancestors.pop() {
+            current = unsafe { ancestor.as_mut() };
+
+            splitted = match current.insert_inner(index, splitted.0.0, splitted.0.1, splitted.1) {
+                InsertResult::Fitted => {
+                    self.ancestors.push((ancestor, index));
+                    return self.ancestors.first().unwrap().0;
+                },
+                InsertResult::Splitted { parent, right } => (parent, right),
+            }
+        }
+
+        let mut root = Box::new(Node::new());
+        root.size = 1;
+        root.keys.push(splitted.0.0);
+        root.values.push(splitted.0.1);
+        unsafe { root.edges.push(Box::from_raw(current as *mut _)); }
+        root.edges.push(splitted.1);
+
+        Box::leak(root).into()
+    }
+
+    fn remove(self, key: &K) -> V {
+        // cursor.current.as_mut().remove(value_index)
+
+        todo!()
     }
 }
 
@@ -186,20 +282,16 @@ where
     }
 
     fn insert(&mut self, key: &K, value: V) -> Result<(), V> {
-        let mut cursor = self.find(key);
+        let cursor = self.find(key);
 
         match cursor.result {
-            SearchResult::Some { .. } => return Err(value),
-            SearchResult::None { edge_index } => unsafe {
-                cursor
-                    .current
-                    .as_mut()
-                    .insert(edge_index, key.clone(), value)
+            SearchResult::Some { .. } => Err(value),
+            SearchResult::None { edge_index } => {
+                self.root = cursor.insert(edge_index, key.clone(), value);
+                Ok(())
             },
             _ => unreachable!(),
         }
-
-        Ok(())
     }
 
     fn lookup(&self, key: &K) -> Option<&V> {
@@ -207,7 +299,7 @@ where
 
         match cursor.result {
             SearchResult::Some { value_index } => unsafe {
-                cursor.current.as_ref().values[value_index].as_ref()
+                Some(&cursor.current.as_ref().values[value_index])
             },
             SearchResult::None { .. } => None,
             _ => unreachable!(),
@@ -215,10 +307,10 @@ where
     }
 
     fn remove(&mut self, key: &K) -> Result<V, ()> {
-        let mut cursor = self.find(key);
+        let cursor = self.find(key);
 
         match cursor.result {
-            SearchResult::Some { value_index } => unsafe { Ok(cursor.current.as_mut().remove(value_index)) },
+            SearchResult::Some { .. } => Ok(cursor.remove(key)),
             SearchResult::None { .. } => Err(()),
             _ => unreachable!(),
         }
