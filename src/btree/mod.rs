@@ -277,17 +277,103 @@ where
             depth += 1;
         }
 
+        let ((key, value), edge) = splitted;
+
         let mut root = Box::new(Node::new());
         root.size = 1;
         root.depth = depth;
-        root.keys.push(splitted.0 .0);
-        root.values.push(splitted.0 .1);
+        root.keys.push(key);
+        root.values.push(value);
         unsafe {
             root.edges.push(Box::from_raw(current as *mut _));
         }
-        root.edges.push(splitted.1);
+        root.edges.push(edge);
 
         self.root = Box::leak(root).into();
+    }
+
+    fn remove_recursive(&mut self, mut cursor: Cursor<K, V>, value_index: usize) -> V {
+        let current = unsafe { cursor.current.as_mut() };
+
+        current.keys.remove(value_index);
+        let value = current.values.remove(value_index);
+
+        if current.depth == 0 {
+            current.size -= 1;
+        } else {
+            // the current is internal node, then find most previous node or least next node (key, value)
+
+            // find most previous
+            let mut flag = false;
+            {
+                let mut parents: Vec<(NonNull<Node<K, V>>, usize)> = vec![(cursor.current, value_index)];
+                let mut target = NonNull::from(current.edges[value_index].as_mut());
+
+                loop {
+                    let target_mut = unsafe { target.as_mut() };
+
+                    if target_mut.depth == 0 {
+                        if target_mut.size == 1 {
+                            break;
+                        }
+
+                        target_mut.size -= 1;
+                        let swapped_key = target_mut.keys.pop().unwrap();
+                        let swapped_value = target_mut.values.pop().unwrap();
+                        current.keys.insert(value_index, swapped_key);
+                        current.values.insert(value_index, swapped_value);
+
+                        cursor.current = target;
+                        cursor.ancestors.extend(parents);
+                        flag = true;
+                        break;
+                    }
+
+                    parents.push((target, target_mut.size));
+                    target = NonNull::from(target_mut.edges.last_mut().unwrap().as_mut()); // target.edges[target.size]
+                }
+            }
+
+            // find least next node
+            if !flag {
+                let mut parents: Vec<(NonNull<Node<K, V>>, usize)> = vec![(cursor.current, value_index + 1)];
+                let mut target = NonNull::from(current.edges[value_index + 1].as_mut());
+
+                loop {
+                    let target_mut = unsafe { target.as_mut() };
+
+                    if target_mut.depth == 0 {
+                        if target_mut.size == 1 {
+                            break;
+                        }
+
+                        target_mut.size -= 1;
+                        let swapped_key = target_mut.keys.remove(0);
+                        let swapped_value = target_mut.values.remove(0);
+                        current.keys.insert(value_index, swapped_key);
+                        current.values.insert(value_index, swapped_value);
+
+                        cursor.current = target;
+                        cursor.ancestors.extend(parents);
+                        flag = true;
+                        break;
+                    }
+
+                    parents.push((target, target_mut.size));
+                    target = NonNull::from(target_mut.edges.first_mut().unwrap().as_mut()); // target.edges[0]
+                }
+            }
+        }
+
+        // there is no bubble since the leaf node has at least one (key, value)
+        if unsafe { cursor.current.as_ref().size } > 0 {
+            return value;
+        }
+
+        // start to move the empty node to root
+        todo!()
+
+        // value
     }
 
     pub fn print(&self)
@@ -339,7 +425,7 @@ where
         let cursor = self.find(key);
 
         match cursor.result {
-            SearchResult::Some { .. } => Ok(cursor.remove(key)),
+            SearchResult::Some { value_index } => Ok(self.remove_recursive(cursor, value_index)),
             SearchResult::None { .. } => Err(()),
             _ => unreachable!(),
         }
