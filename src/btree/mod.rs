@@ -198,6 +198,7 @@ impl<K: Ord, V> Cursor<K, V> {
 
 pub struct BTree<K, V> {
     root: NonNull<Node<K, V>>,
+    size: usize,
 }
 
 impl<K, V> BTree<K, V>
@@ -270,12 +271,19 @@ where
 
         if current.depth == 0 {
             current.size -= 1;
+
+            // exceptionally, if the root is leaf, just remove it
+            if unsafe { self.root.as_ref().depth } == 0 {
+                println!("root is leaf");
+                return value;
+            }
         } else {
             // the current is internal node, then find predecessor node or successor node (key, value)
 
             // find predecessor
             let mut flag = false;
             {
+                println!("find predecessor");
                 let mut parents: Vec<(NonNull<Node<K, V>>, usize)> =
                     vec![(cursor.current, value_index)];
                 let mut target = NonNull::from(current.edges[value_index].as_mut());
@@ -304,6 +312,7 @@ where
 
             // find successor
             if !flag {
+                println!("find successor");
                 let mut parents: Vec<(NonNull<Node<K, V>>, usize)> =
                     vec![(cursor.current, value_index + 1)];
                 let mut target = NonNull::from(current.edges[value_index + 1].as_mut());
@@ -312,12 +321,11 @@ where
                     let target_mut = unsafe { target.as_mut() };
 
                     if target_mut.depth == 0 {
-                        if target_mut.size == 1 {
-                            break;
-                        }
-
                         target_mut.size -= 1;
                         let swapped_datum = target_mut.data.pop().unwrap();
+
+                        println!("swapped: {:?}", swapped_datum);
+
                         current.data.insert(value_index, swapped_datum);
 
                         cursor.ancestors.extend(parents);
@@ -331,71 +339,20 @@ where
         }
 
         // there is no bubble since the leaf node has at least one (key, value)
-        if unsafe { cursor.current.as_ref().size } > 0 {
+        if current.depth == 0 && current.size > 0 {
+            println!("size is non-zero");
             return value;
         }
 
+        println!("merge");
+
         // start to move the empty node to root
-        // I use right-hand rule
+        // I use left-hand rule
         while let Some((mut parent, edge_index)) = cursor.ancestors.pop() {
             let parent = unsafe { parent.as_mut() };
-            // the only one that uses left-hand rule since this is the leftmost node
-            if edge_index == B_MAX_NODES {
-                let left_sibling = parent.edges[edge_index - 1].as_mut();
-
-                if parent.size == 1 {
-                    if left_sibling.size == 1 {
-                        // merge parent and sibling, CONTINUE
-                        let mut current = parent.edges.remove(0);
-                        let left_sibling = parent.edges[edge_index - 1].as_mut();
-
-                        left_sibling.edges.push(current.edges.pop().unwrap());
-
-                        left_sibling.size += 1;
-                        parent.size -= 1; // make empty node that has only one edge
-                        debug_assert!(parent.size == 0);
-                        left_sibling.data.push(parent.data.pop().unwrap());
-
-                        drop(current);
-                    } else {
-                        let left_sibling = parent.edges[edge_index - 1].as_mut();
-                        let new_parent = left_sibling.data.pop().unwrap();
-                        let moved_edge = left_sibling.edges.pop().unwrap();
-
-                        let current = parent.edges[edge_index].as_mut();
-                        current.size += 1;
-                        current.data.push(parent.data.pop().unwrap());
-                        current.edges.insert(0, moved_edge);
-
-                        parent.data.push(new_parent);
-                        break;
-                    }
-                } else {
-                    if left_sibling.size == 1 {
-                        let new_sibling = parent.data.remove(edge_index - 1);
-                        let mut current = parent.edges.remove(edge_index);
-                        let moved_edge = current.edges.pop().unwrap();
-
-                        let left_sibling = parent.edges[edge_index - 1].as_mut();
-                        left_sibling.data.push(new_sibling);
-                        left_sibling.edges.push(moved_edge);
-                        drop(current);
-                        break;
-                    } else {
-                        let new_sibling = parent.data.remove(edge_index - 1);
-                        let left_sibling = parent.edges[edge_index - 1].as_mut();
-                        parent.data.push(left_sibling.data.pop().unwrap());
-                        let new_edge = left_sibling.edges.pop().unwrap();
-
-                        let current = parent.edges[edge_index].as_mut();
-                        current.size += 1;
-                        debug_assert!(current.size == 1);
-                        current.data.insert(0, new_sibling);
-                        current.edges.insert(0, new_edge);
-                        break;
-                    }
-                }
-            } else {
+            println!("parent data: {:?}, {}", parent.data, edge_index);
+            // the only one that uses right-hand rule since this is the rightmost node
+            if edge_index == 0 {
                 let right_sibling_size = parent.edges[edge_index + 1].size;
 
                 // parent has one (key, value), therefore it is to be empty node.
@@ -403,11 +360,16 @@ where
                     debug_assert!(edge_index == 0);
 
                     if right_sibling_size == 1 {
-                        // merge parent and sibling, CONTINUE
+                        // CASE 1
+                        println!("CASE 1");
                         let mut current = parent.edges.remove(0);
-                        let right_sibling = parent.edges[edge_index + 1].as_mut();
+                        let right_sibling = parent.edges[edge_index].as_mut();
 
-                        right_sibling.edges.insert(0, current.edges.pop().unwrap());
+                        if let Some(edge) = current.edges.pop() {
+                            right_sibling.edges.insert(0, edge);
+                        } else {
+                            debug_assert!(right_sibling.edges.len() == 0);
+                        }
 
                         right_sibling.size += 1;
                         parent.size -= 1; // make empty node that has only one edge
@@ -416,6 +378,8 @@ where
 
                         drop(current);
                     } else {
+                        // CASE 2
+                        println!("CASE 2");
                         let right_sibling = parent.edges[edge_index + 1].as_mut();
                         let new_parent = right_sibling.data.remove(0);
                         let moved_edge = right_sibling.edges.remove(0);
@@ -430,6 +394,8 @@ where
                     }
                 } else {
                     if right_sibling_size == 1 {
+                        // CASE 3
+                        println!("CASE 3");
                         let new_sibling = parent.data.remove(edge_index);
                         let mut current = parent.edges.remove(edge_index);
                         let moved_edge = current.edges.pop().unwrap();
@@ -440,6 +406,8 @@ where
                         drop(current);
                         break;
                     } else {
+                        // CASE 4
+                        println!("CASE 4");
                         let new_sibling = parent.data.remove(edge_index);
                         let right_sibling = parent.edges[edge_index + 1].as_mut();
                         parent.data.insert(0, right_sibling.data.remove(0));
@@ -453,6 +421,72 @@ where
                         break;
                     }
                 }
+            } else {
+                let left_sibling = parent.edges[edge_index - 1].as_mut();
+
+                if parent.size == 1 {
+                    if left_sibling.size == 1 {
+                        // CASE 5
+                        println!("CASE 5");
+                        let mut current = parent.edges.pop().unwrap();
+                        let left_sibling = parent.edges.last_mut().unwrap();
+
+                        if let Some(edge) = current.edges.pop() {
+                            left_sibling.edges.push(edge);
+                        } else {
+                            debug_assert!(left_sibling.edges.len() == 0);
+                        }
+
+                        left_sibling.size += 1;
+                        parent.size -= 1; // make empty node that has only one edge
+                        debug_assert!(parent.size == 0);
+                        left_sibling.data.push(parent.data.pop().unwrap());
+
+                        drop(current);
+                    } else {
+                        // CASE 6
+                        println!("CASE 6");
+                        let left_sibling = parent.edges[edge_index - 1].as_mut();
+                        let new_parent = left_sibling.data.pop().unwrap();
+                        let moved_edge = left_sibling.edges.pop().unwrap();
+
+                        let current = parent.edges[edge_index].as_mut();
+                        current.size += 1;
+                        current.data.push(parent.data.pop().unwrap());
+                        current.edges.insert(0, moved_edge);
+
+                        parent.data.push(new_parent);
+                        break;
+                    }
+                } else {
+                    if left_sibling.size == 1 {
+                        // CASE 7
+                        println!("CASE 7");
+                        let new_sibling = parent.data.remove(edge_index - 1);
+                        let mut current = parent.edges.remove(edge_index);
+                        let moved_edge = current.edges.pop().unwrap();
+
+                        let left_sibling = parent.edges[edge_index - 1].as_mut();
+                        left_sibling.data.push(new_sibling);
+                        left_sibling.edges.push(moved_edge);
+                        drop(current);
+                        break;
+                    } else {
+                        // CASE 8
+                        println!("CASE 8");
+                        let new_sibling = parent.data.remove(edge_index - 1);
+                        let left_sibling = parent.edges[edge_index - 1].as_mut();
+                        parent.data.push(left_sibling.data.pop().unwrap());
+                        let new_edge = left_sibling.edges.pop().unwrap();
+
+                        let current = parent.edges[edge_index].as_mut();
+                        current.size += 1;
+                        debug_assert!(current.size == 1);
+                        current.data.insert(0, new_sibling);
+                        current.edges.insert(0, new_edge);
+                        break;
+                    }
+                }
             }
         }
 
@@ -460,6 +494,7 @@ where
 
         // root is now empty. Swap with unique edge
         if root.size == 0 {
+            debug_assert!(root.edges.len() == 1);
             self.root = Box::leak(root.edges.pop().unwrap()).into();
         }
 
@@ -473,6 +508,32 @@ where
     {
         unsafe { println!("{:?}", self.root.as_ref()) };
     }
+
+    pub fn assert(&self) {
+        let root = unsafe { self.root.as_ref() };
+
+        fn count_nodes<K, V>(node: &Node<K, V>, depth: usize, root_depth: usize) -> usize {
+            if node.depth != root_depth {
+                assert!(node.size > 0 && node.size <= B_MAX_NODES);
+            }
+
+            if depth != 0 {
+                assert_eq!(node.size + 1, node.edges.len());
+            }
+
+            assert_eq!(node.size, node.data.len());
+            assert_eq!(node.depth, depth);
+
+            node.size
+                + node
+                    .edges
+                    .iter()
+                    .map(|node| count_nodes(node, depth - 1, root_depth))
+                    .sum::<usize>()
+        }
+
+        assert_eq!(count_nodes(root, root.depth, root.depth), self.size);
+    }
 }
 
 impl<K, V> SequentialMap<K, V> for BTree<K, V>
@@ -483,6 +544,7 @@ where
     fn new() -> Self {
         Self {
             root: Box::leak(Box::new(Node::new())).into(),
+            size: 0,
         }
     }
 
@@ -493,6 +555,7 @@ where
             SearchResult::Some { .. } => Err(value),
             SearchResult::None { edge_index } => {
                 self.insert_recursive(cursor, edge_index, key.clone(), value);
+                self.size += 1;
                 Ok(())
             }
             _ => unreachable!(),
@@ -515,7 +578,11 @@ where
         let cursor = self.find(key);
 
         match cursor.result {
-            SearchResult::Some { value_index } => Ok(self.remove_recursive(cursor, value_index)),
+            SearchResult::Some { value_index } => {
+                let value = self.remove_recursive(cursor, value_index);
+                self.size -= 1;
+                Ok(value)
+            }
             SearchResult::None { .. } => Err(()),
             _ => unreachable!(),
         }
