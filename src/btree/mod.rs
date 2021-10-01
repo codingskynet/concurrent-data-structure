@@ -274,7 +274,6 @@ where
 
             // exceptionally, if the root is leaf, just remove it
             if unsafe { self.root.as_ref().depth } == 0 {
-                println!("root is leaf");
                 return value;
             }
         } else {
@@ -283,7 +282,6 @@ where
             // find predecessor
             let mut flag = false;
             {
-                println!("find predecessor");
                 let mut parents: Vec<(NonNull<Node<K, V>>, usize)> =
                     vec![(cursor.current, value_index)];
                 let mut target = NonNull::from(current.edges[value_index].as_mut());
@@ -312,7 +310,6 @@ where
 
             // find successor
             if !flag {
-                println!("find successor");
                 let mut parents: Vec<(NonNull<Node<K, V>>, usize)> =
                     vec![(cursor.current, value_index + 1)];
                 let mut target = NonNull::from(current.edges[value_index + 1].as_mut());
@@ -323,8 +320,6 @@ where
                     if target_mut.depth == 0 {
                         target_mut.size -= 1;
                         let swapped_datum = target_mut.data.pop().unwrap();
-
-                        println!("swapped: {:?}", swapped_datum);
 
                         current.data.insert(value_index, swapped_datum);
 
@@ -340,17 +335,13 @@ where
 
         // there is no bubble since the leaf node has at least one (key, value)
         if current.depth == 0 && current.size > 0 {
-            println!("size is non-zero");
             return value;
         }
-
-        println!("merge");
 
         // start to move the empty node to root
         // I use left-hand rule
         while let Some((mut parent, edge_index)) = cursor.ancestors.pop() {
             let parent = unsafe { parent.as_mut() };
-            println!("parent data: {:?}, {}", parent.data, edge_index);
             // the only one that uses right-hand rule since this is the rightmost node
             if edge_index == 0 {
                 let right_sibling_size = parent.edges[edge_index + 1].size;
@@ -361,7 +352,6 @@ where
 
                     if right_sibling_size == 1 {
                         // CASE 1
-                        println!("CASE 1");
                         let mut current = parent.edges.remove(0);
                         let right_sibling = parent.edges[edge_index].as_mut();
 
@@ -379,15 +369,22 @@ where
                         drop(current);
                     } else {
                         // CASE 2
-                        println!("CASE 2");
                         let right_sibling = parent.edges[edge_index + 1].as_mut();
+                        right_sibling.size -= 1;
                         let new_parent = right_sibling.data.remove(0);
-                        let moved_edge = right_sibling.edges.remove(0);
+                        let moved_edge = if right_sibling.depth != 0 {
+                            Some(right_sibling.edges.remove(0))
+                        } else {
+                            None
+                        };
 
                         let current = parent.edges[edge_index].as_mut();
                         current.size += 1;
                         current.data.push(parent.data.pop().unwrap());
-                        current.edges.push(moved_edge);
+
+                        if let Some(edge) = moved_edge {
+                            current.edges.push(edge);
+                        }
 
                         parent.data.push(new_parent);
                         break;
@@ -395,29 +392,41 @@ where
                 } else {
                     if right_sibling_size == 1 {
                         // CASE 3
-                        println!("CASE 3");
+                        parent.size -= 1;
                         let new_sibling = parent.data.remove(edge_index);
                         let mut current = parent.edges.remove(edge_index);
-                        let moved_edge = current.edges.pop().unwrap();
+                        let moved_edge = current.edges.pop();
 
-                        let right_sibling = parent.edges[edge_index + 1].as_mut();
+                        let right_sibling = parent.edges[edge_index].as_mut();
+                        right_sibling.size += 1;
                         right_sibling.data.insert(0, new_sibling);
-                        right_sibling.edges.insert(0, moved_edge);
+
+                        if let Some(edge) = moved_edge {
+                            right_sibling.edges.insert(0, edge);
+                        }
                         drop(current);
                         break;
                     } else {
                         // CASE 4
-                        println!("CASE 4");
                         let new_sibling = parent.data.remove(edge_index);
                         let right_sibling = parent.edges[edge_index + 1].as_mut();
+                        right_sibling.size -= 1;
                         parent.data.insert(0, right_sibling.data.remove(0));
-                        let new_edge = right_sibling.edges.remove(0);
+
+                        let moved_edge = if right_sibling.depth != 0 {
+                            Some(right_sibling.edges.remove(0))
+                        } else {
+                            None
+                        };
 
                         let current = parent.edges[edge_index].as_mut();
                         current.size += 1;
                         debug_assert!(current.size == 1);
                         current.data.push(new_sibling);
-                        current.edges.push(new_edge);
+
+                        if let Some(edge) = moved_edge {
+                            current.edges.push(edge);
+                        }
                         break;
                     }
                 }
@@ -427,7 +436,6 @@ where
                 if parent.size == 1 {
                     if left_sibling.size == 1 {
                         // CASE 5
-                        println!("CASE 5");
                         let mut current = parent.edges.pop().unwrap();
                         let left_sibling = parent.edges.last_mut().unwrap();
 
@@ -445,15 +453,18 @@ where
                         drop(current);
                     } else {
                         // CASE 6
-                        println!("CASE 6");
                         let left_sibling = parent.edges[edge_index - 1].as_mut();
+                        left_sibling.size -= 1;
                         let new_parent = left_sibling.data.pop().unwrap();
-                        let moved_edge = left_sibling.edges.pop().unwrap();
+                        let moved_edge = left_sibling.edges.pop();
 
                         let current = parent.edges[edge_index].as_mut();
                         current.size += 1;
                         current.data.push(parent.data.pop().unwrap());
-                        current.edges.insert(0, moved_edge);
+
+                        if let Some(edge) = moved_edge {
+                            current.edges.insert(0, edge);
+                        }
 
                         parent.data.push(new_parent);
                         break;
@@ -461,29 +472,35 @@ where
                 } else {
                     if left_sibling.size == 1 {
                         // CASE 7
-                        println!("CASE 7");
+                        parent.size -= 1;
                         let new_sibling = parent.data.remove(edge_index - 1);
                         let mut current = parent.edges.remove(edge_index);
-                        let moved_edge = current.edges.pop().unwrap();
+                        let moved_edge = current.edges.pop();
 
                         let left_sibling = parent.edges[edge_index - 1].as_mut();
+                        left_sibling.size += 1;
                         left_sibling.data.push(new_sibling);
-                        left_sibling.edges.push(moved_edge);
+                        if let Some(edge) = moved_edge {
+                            left_sibling.edges.push(edge);
+                        }
                         drop(current);
                         break;
                     } else {
                         // CASE 8
-                        println!("CASE 8");
                         let new_sibling = parent.data.remove(edge_index - 1);
                         let left_sibling = parent.edges[edge_index - 1].as_mut();
+                        left_sibling.size -= 1;
                         parent.data.push(left_sibling.data.pop().unwrap());
-                        let new_edge = left_sibling.edges.pop().unwrap();
+                        let moved_edge = left_sibling.edges.pop();
 
                         let current = parent.edges[edge_index].as_mut();
                         current.size += 1;
                         debug_assert!(current.size == 1);
                         current.data.insert(0, new_sibling);
-                        current.edges.insert(0, new_edge);
+
+                        if let Some(edge) = moved_edge {
+                            current.edges.insert(0, edge);
+                        }
                         break;
                     }
                 }
