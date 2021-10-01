@@ -320,7 +320,7 @@ where
 
                     if target_mut.depth == 0 {
                         target_mut.size -= 1;
-                        let swapped_datum = target_mut.data.pop().unwrap();
+                        let swapped_datum = target_mut.data.remove(0);
 
                         current.data.insert(value_index, swapped_datum);
 
@@ -354,6 +354,7 @@ where
 
                     if right_sibling_size == 1 {
                         // CASE 1
+                        // println!("CASE 1");
                         let mut current = parent.edges.remove(0);
                         let right_sibling = parent.edges[edge_index].as_mut();
 
@@ -371,6 +372,7 @@ where
                         drop(current);
                     } else {
                         // CASE 2
+                        // println!("CASE 2");
                         let right_sibling = parent.edges[edge_index + 1].as_mut();
                         right_sibling.size -= 1;
                         let new_parent = right_sibling.data.remove(0);
@@ -394,6 +396,7 @@ where
                 } else {
                     if right_sibling_size == 1 {
                         // CASE 3
+                        // println!("CASE 3");
                         parent.size -= 1;
                         let new_sibling = parent.data.remove(edge_index);
                         let mut current = parent.edges.remove(edge_index);
@@ -410,10 +413,11 @@ where
                         break;
                     } else {
                         // CASE 4
+                        // println!("CASE 4");
                         let new_sibling = parent.data.remove(edge_index);
                         let right_sibling = parent.edges[edge_index + 1].as_mut();
                         right_sibling.size -= 1;
-                        parent.data.insert(0, right_sibling.data.remove(0));
+                        parent.data.insert(edge_index, right_sibling.data.remove(0));
 
                         let moved_edge = if right_sibling.depth != 0 {
                             Some(right_sibling.edges.remove(0))
@@ -438,6 +442,7 @@ where
                 if parent.size == 1 {
                     if left_sibling.size == 1 {
                         // CASE 5
+                        // println!("CASE 5");
                         let mut current = parent.edges.pop().unwrap();
                         let left_sibling = parent.edges.last_mut().unwrap();
 
@@ -455,8 +460,7 @@ where
                         drop(current);
                     } else {
                         // CASE 6
-                        println!("parent: {:?}, {}", parent, edge_index);
-
+                        // println!("CASE 6");
                         let left_sibling = parent.edges[edge_index - 1].as_mut();
                         left_sibling.size -= 1;
                         let new_parent = left_sibling.data.pop().unwrap();
@@ -476,6 +480,7 @@ where
                 } else {
                     if left_sibling.size == 1 {
                         // CASE 7
+                        // println!("CASE 7");
                         parent.size -= 1;
                         let new_sibling = parent.data.remove(edge_index - 1);
                         let mut current = parent.edges.remove(edge_index);
@@ -491,10 +496,11 @@ where
                         break;
                     } else {
                         // CASE 8
+                        // println!("CASE 8");
                         let new_sibling = parent.data.remove(edge_index - 1);
                         let left_sibling = parent.edges[edge_index - 1].as_mut();
                         left_sibling.size -= 1;
-                        parent.data.push(left_sibling.data.pop().unwrap());
+                        parent.data.insert(edge_index - 1, left_sibling.data.pop().unwrap());
                         let moved_edge = left_sibling.edges.pop();
 
                         let current = parent.edges[edge_index].as_mut();
@@ -533,13 +539,15 @@ where
     pub fn assert(&self) {
         let root = unsafe { self.root.as_ref() };
 
-        fn count_nodes<K: Ord, V>(node: &Node<K, V>, depth: usize, root_depth: usize) -> usize {
+        fn count_nodes<K: Ord, V>(
+            node: &Node<K, V>,
+            depth: usize,
+            root_depth: usize,
+            from: Option<&K>,
+            to: Option<&K>,
+        ) -> usize {
             if node.depth != root_depth {
                 assert!(node.size > 0 && node.size <= B_MAX_NODES);
-
-                for two in node.data.windows(2) {
-                    assert!(two[0].0 < two[1].0);
-                }
             }
 
             if depth != 0 {
@@ -549,15 +557,53 @@ where
             assert_eq!(node.size, node.data.len());
             assert_eq!(node.depth, depth);
 
+            if node.size > 0 {
+                if let Some(from) = from {
+                    assert!(*from < node.data.first().unwrap().0);
+                }
+
+                for two in node.data.windows(2) {
+                    assert!(two[0].0 < two[1].0);
+                }
+
+                if let Some(to) = to {
+                    assert!(node.data.last().unwrap().0 < *to);
+                }
+            }
+
             node.size
                 + node
                     .edges
                     .iter()
-                    .map(|node| count_nodes(node, depth - 1, root_depth))
+                    .enumerate()
+                    .map(|(index, n)| {
+                        let from = if index > 0 {
+                            Some(&node.data[index - 1].0)
+                        } else {
+                            None
+                        };
+
+                        let to = if index < node.edges.len() - 1 {
+                            Some(&node.data[index].0)
+                        } else {
+                            None
+                        };
+
+                        count_nodes(
+                            n,
+                            depth - 1,
+                            root_depth,
+                            from,
+                            to,
+                        )
+                    })
                     .sum::<usize>()
         }
 
-        assert_eq!(count_nodes(root, root.depth, root.depth), self.size);
+        assert_eq!(
+            count_nodes(root, root.depth, root.depth, None, None),
+            self.size
+        );
     }
 }
 

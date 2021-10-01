@@ -1,6 +1,6 @@
 use cds::{btree::BTree, map::SequentialMap};
 
-use crate::util::map::{stress_sequential, stress_sequential_btree};
+use crate::util::map::{stress_sequential};
 
 #[test]
 fn test_insert_lookup_btree() {
@@ -465,5 +465,6 @@ fn test_remove_btree() {
 
 #[test]
 fn stress_btree() {
-    stress_sequential_btree(100_000);
+    stress_sequential::<String, BTree<_, _>>(100_000);
+
 }
