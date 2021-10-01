@@ -265,7 +265,7 @@ where
     }
 
     fn remove_recursive(&mut self, mut cursor: Cursor<K, V>, value_index: usize) -> V {
-        let current = unsafe { cursor.current.as_mut() };
+        let mut current = unsafe { cursor.current.as_mut() };
 
         let value = current.data.remove(value_index).1;
 
@@ -298,6 +298,7 @@ where
                         let swapped_datum = target_mut.data.pop().unwrap();
                         current.data.insert(value_index, swapped_datum);
 
+                        current = target_mut;
                         cursor.ancestors.extend(parents);
                         flag = true;
                         break;
@@ -323,11 +324,12 @@ where
 
                         current.data.insert(value_index, swapped_datum);
 
+                        current = target_mut;
                         cursor.ancestors.extend(parents);
                         break;
                     }
 
-                    parents.push((target, target_mut.size));
+                    parents.push((target, 0));
                     target = NonNull::from(target_mut.edges.first_mut().unwrap().as_mut());
                 }
             }
@@ -453,6 +455,8 @@ where
                         drop(current);
                     } else {
                         // CASE 6
+                        println!("parent: {:?}, {}", parent, edge_index);
+
                         let left_sibling = parent.edges[edge_index - 1].as_mut();
                         left_sibling.size -= 1;
                         let new_parent = left_sibling.data.pop().unwrap();
@@ -529,9 +533,13 @@ where
     pub fn assert(&self) {
         let root = unsafe { self.root.as_ref() };
 
-        fn count_nodes<K, V>(node: &Node<K, V>, depth: usize, root_depth: usize) -> usize {
+        fn count_nodes<K: Ord, V>(node: &Node<K, V>, depth: usize, root_depth: usize) -> usize {
             if node.depth != root_depth {
                 assert!(node.size > 0 && node.size <= B_MAX_NODES);
+
+                for two in node.data.windows(2) {
+                    assert!(two[0].0 < two[1].0);
+                }
             }
 
             if depth != 0 {

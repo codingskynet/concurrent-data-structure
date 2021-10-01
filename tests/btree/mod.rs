@@ -1,6 +1,6 @@
 use cds::{btree::BTree, map::SequentialMap};
 
-use crate::util::map::stress_sequential;
+use crate::util::map::{stress_sequential, stress_sequential_btree};
 
 #[test]
 fn test_insert_lookup_btree() {
@@ -19,13 +19,40 @@ fn test_insert_lookup_btree() {
 
 #[test]
 fn test_remove_btree() {
-    // CASE 0: remove on leaf root
+    // CASE 0-1: remove on leaf root
     {
         let mut tree: BTree<i32, i32> = BTree::new();
         assert_eq!(tree.insert(&1, 1), Ok(()));
         // tree.print();
         assert_eq!(tree.remove(&1), Ok(1));
         // tree.print();
+        tree.assert();
+    }
+
+    // CASE 0-2: remove on non-leaf root
+    {
+        let target = 2;
+
+        let mut tree: BTree<i32, i32> = BTree::new();
+
+        assert_eq!(tree.insert(&0, 0), Ok(()));
+        assert_eq!(tree.insert(&2, 2), Ok(()));
+        assert_eq!(tree.insert(&3, 3), Ok(()));
+        assert_eq!(tree.insert(&4, 4), Ok(()));
+        assert_eq!(tree.insert(&5, 5), Ok(()));
+        assert_eq!(tree.insert(&1, 1), Ok(()));
+
+        // tree.print();
+        assert_eq!(tree.remove(&target), Ok(target));
+        // tree.print();
+
+        for i in 0..5 {
+            if i == target {
+                assert_eq!(tree.lookup(&i), None);
+            } else {
+                assert_eq!(tree.lookup(&i), Some(&i));
+            }
+        }
         tree.assert();
     }
 
@@ -421,9 +448,9 @@ fn test_remove_btree() {
         assert_eq!(tree.insert(&7, 7), Ok(()));
         assert_eq!(tree.insert(&8, 8), Ok(()));
 
-        tree.print();
+        // tree.print();
         assert_eq!(tree.remove(&target), Ok(target));
-        tree.print();
+        // tree.print();
 
         for i in 0..13 {
             if i == target {
@@ -438,5 +465,5 @@ fn test_remove_btree() {
 
 #[test]
 fn stress_btree() {
-    stress_sequential::<String, BTree<_, _>>(100_000);
+    stress_sequential_btree(100_000);
 }
