@@ -1,8 +1,5 @@
-use std::{
-    cmp::Ordering,
-    mem,
-    ptr::NonNull,
-};
+use std::fmt::Debug;
+use std::{cmp::Ordering, mem, ptr::NonNull};
 
 use crate::map::SequentialMap;
 
@@ -10,8 +7,10 @@ const B_MAX_NODES: usize = 2;
 const B_MID_INDEX: usize = B_MAX_NODES / 2;
 
 // TODO: optimize with MaybeUninit
+#[derive(Debug)]
 struct Node<K, V> {
     size: usize,
+    depth: usize,
     keys: Vec<K>, // keys/values max size: B_MAX_NODES + 1 for violating invariant
     values: Vec<V>,
     edges: Vec<Box<Node<K, V>>>, // max size: B_MAX_NODES + 2
@@ -21,6 +20,7 @@ impl<K, V> Node<K, V> {
     fn new() -> Self {
         Self {
             size: 0,
+            depth: 0,
             keys: Vec::with_capacity(B_MAX_NODES + 1),
             values: Vec::with_capacity(B_MAX_NODES + 1),
             edges: Vec::with_capacity(B_MAX_NODES + 2),
@@ -58,13 +58,16 @@ impl<K, V> Node<K, V> {
 enum InsertResult<K, V> {
     Fitted,
     Splitted {
-        // left: NonNull<Node<K, V>>,
         parent: (K, V),
         right: Box<Node<K, V>>,
     },
 }
 
-impl<K, V> Node<K, V> {
+impl<K, V> Node<K, V>
+where
+    K: Debug,
+    V: Debug,
+{
     fn insert_leaf(&mut self, edge_index: usize, key: K, value: V) -> InsertResult<K, V> {
         self.size += 1;
 
@@ -82,16 +85,22 @@ impl<K, V> Node<K, V> {
         node.keys = self.keys.split_off(B_MID_INDEX + 1);
         node.values = self.values.split_off(B_MID_INDEX + 1);
 
-        let mid_key = node.keys.pop().unwrap();
-        let mid_value = node.values.pop().unwrap();
+        let mid_key = self.keys.pop().unwrap();
+        let mid_value = self.values.pop().unwrap();
 
-       InsertResult::Splitted {
-           parent: (mid_key, mid_value),
-           right: node,
-       }
+        InsertResult::Splitted {
+            parent: (mid_key, mid_value),
+            right: node,
+        }
     }
 
-    fn insert_inner(&mut self, edge_index: usize, key: K, value: V, edge: Box<Node<K, V>>) -> InsertResult<K, V> {
+    fn insert_inner(
+        &mut self,
+        edge_index: usize,
+        key: K,
+        value: V,
+        edge: Box<Node<K, V>>,
+    ) -> InsertResult<K, V> {
         self.size += 1;
 
         self.keys.insert(edge_index, key);
@@ -106,17 +115,18 @@ impl<K, V> Node<K, V> {
         let mut node = Box::new(Node::new());
         self.size = B_MAX_NODES / 2;
         node.size = B_MAX_NODES / 2;
+        node.depth = self.depth;
         node.keys = self.keys.split_off(B_MID_INDEX + 1);
         node.values = self.values.split_off(B_MID_INDEX + 1);
         node.edges = self.edges.split_off(B_MID_INDEX + 1);
 
-        let mid_key = node.keys.pop().unwrap();
-        let mid_value = node.values.pop().unwrap();
+        let mid_key = self.keys.pop().unwrap();
+        let mid_value = self.values.pop().unwrap();
 
-       InsertResult::Splitted {
-           parent: (mid_key, mid_value),
-           right: node,
-       }
+        InsertResult::Splitted {
+            parent: (mid_key, mid_value),
+            right: node,
+        }
     }
 
     fn remove(&mut self, value_index: usize) -> V {
@@ -136,12 +146,14 @@ impl<K, V> Node<K, V> {
     }
 }
 
+#[derive(Debug)]
 struct Cursor<K, V> {
     ancestors: Vec<(NonNull<Node<K, V>>, usize)>, // (parent, index from parent.edges[index])
     current: NonNull<Node<K, V>>,
     result: SearchResult,
 }
 
+#[derive(Debug)]
 enum SearchResult {
     Some { value_index: usize },   // the value of the key exists
     None { edge_index: usize },    // the value of the key does not exist
@@ -154,7 +166,7 @@ impl<K: Ord, V> Cursor<K, V> {
         Self {
             ancestors: Vec::new(),
             current: tree.root,
-            result: SearchResult::Descent { edge_index: 0 }, // for beautiful recursive search, the root node is dummy
+            result: SearchResult::NodeSearch,
         }
     }
 
@@ -205,41 +217,6 @@ impl<K: Ord, V> Cursor<K, V> {
         }
     }
 
-    /// insert (key, value) and return root of the tree
-    fn insert(mut self, edge_index: usize, key: K, value: V) -> NonNull<Node<K, V>> {
-        let mut current = unsafe { self.current.as_mut() };
-
-        let mut splitted = match current.insert_leaf(edge_index, key, value) {
-            InsertResult::Fitted => {
-                self.ancestors.push((self.current, edge_index));
-                return self.ancestors.first().unwrap().0;
-            },
-            InsertResult::Splitted { parent, right } => (parent, right),
-        };
-
-        // split & merge to maintain the invariant of B-Tree
-        while let Some((mut ancestor, index)) = self.ancestors.pop() {
-            current = unsafe { ancestor.as_mut() };
-
-            splitted = match current.insert_inner(index, splitted.0.0, splitted.0.1, splitted.1) {
-                InsertResult::Fitted => {
-                    self.ancestors.push((ancestor, index));
-                    return self.ancestors.first().unwrap().0;
-                },
-                InsertResult::Splitted { parent, right } => (parent, right),
-            }
-        }
-
-        let mut root = Box::new(Node::new());
-        root.size = 1;
-        root.keys.push(splitted.0.0);
-        root.values.push(splitted.0.1);
-        unsafe { root.edges.push(Box::from_raw(current as *mut _)); }
-        root.edges.push(splitted.1);
-
-        Box::leak(root).into()
-    }
-
     fn remove(self, key: &K) -> V {
         // cursor.current.as_mut().remove(value_index)
 
@@ -251,29 +228,81 @@ pub struct BTree<K, V> {
     root: NonNull<Node<K, V>>,
 }
 
-impl<K: Ord, V> BTree<K, V> {
+impl<K, V> BTree<K, V>
+where
+    K: Ord + Debug,
+    V: Debug,
+{
     fn find(&self, key: &K) -> Cursor<K, V> {
         let mut cursor = Cursor::new(self);
 
         loop {
-            cursor = match cursor.result {
-                SearchResult::Some { .. } => return cursor,
-                SearchResult::Descent { edge_index } => cursor.descend(edge_index),
-                _ => unreachable!(),
-            };
-
+            // on the node, search with the key
             cursor = match cursor.result {
                 SearchResult::None { .. } => return cursor,
                 SearchResult::NodeSearch => cursor.search_in_node(key),
                 _ => unreachable!(),
             };
+
+            // if it needs to descend to child, do it.
+            cursor = match cursor.result {
+                SearchResult::Some { .. } => return cursor,
+                SearchResult::Descent { edge_index } => cursor.descend(edge_index),
+                _ => unreachable!(),
+            };
         }
+    }
+
+    /// insert (key, value) and return root of the tree
+    fn insert_recursive(&mut self, mut cursor: Cursor<K, V>, edge_index: usize, key: K, value: V) {
+        let mut current = unsafe { cursor.current.as_mut() };
+
+        let mut splitted = match current.insert_leaf(edge_index, key, value) {
+            InsertResult::Fitted => return,
+            InsertResult::Splitted { parent, right } => (parent, right),
+        };
+
+        let mut depth: usize = 1;
+
+        // split & merge to maintain the invariant of B-Tree
+        while let Some((mut ancestor, index)) = cursor.ancestors.pop() {
+            current = unsafe { ancestor.as_mut() };
+
+            let ((key, value), edge) = splitted;
+            splitted = match current.insert_inner(index, key, value, edge) {
+                InsertResult::Fitted => return,
+                InsertResult::Splitted { parent, right } => (parent, right),
+            };
+
+            depth += 1;
+        }
+
+        let mut root = Box::new(Node::new());
+        root.size = 1;
+        root.depth = depth;
+        root.keys.push(splitted.0 .0);
+        root.values.push(splitted.0 .1);
+        unsafe {
+            root.edges.push(Box::from_raw(current as *mut _));
+        }
+        root.edges.push(splitted.1);
+
+        self.root = Box::leak(root).into();
+    }
+
+    pub fn print(&self)
+    where
+        K: Debug,
+        V: Debug,
+    {
+        unsafe { println!("{:?}", self.root.as_ref()) };
     }
 }
 
 impl<K, V> SequentialMap<K, V> for BTree<K, V>
 where
-    K: Ord + Clone,
+    K: Ord + Clone + Debug,
+    V: Debug,
 {
     fn new() -> Self {
         Self {
@@ -287,9 +316,9 @@ where
         match cursor.result {
             SearchResult::Some { .. } => Err(value),
             SearchResult::None { edge_index } => {
-                self.root = cursor.insert(edge_index, key.clone(), value);
+                self.insert_recursive(cursor, edge_index, key.clone(), value);
                 Ok(())
-            },
+            }
             _ => unreachable!(),
         }
     }
