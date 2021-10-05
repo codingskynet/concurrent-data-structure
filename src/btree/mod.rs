@@ -63,30 +63,68 @@ enum InsertResult<K, V> {
 
 impl<K, V> Node<K, V>
 where
-    K: Debug,
+    K: Debug + Ord,
     V: Debug,
 {
     fn insert_leaf(&mut self, edge_index: usize, key: K, value: V) -> InsertResult<K, V> {
-        self.size += 1;
+        if self.size < B_MAX_NODES {
+            self.size += 1;
+            self.data.insert(edge_index, (key, value));
 
-        self.data.insert(edge_index, (key, value));
+            InsertResult::Fitted
+        } else {
+            // Split node into middle (key, value) and
+            // two leaf nodes that the left one is connected with parent and the right one is disconnected.
+            // Ex) On 2-3 tree, the leaf (key, value): parent-Node { data: [(1, 1), (2, 2)] } and try inserting (3, 3):
+            // Make parent-[(1, 1)] and return InsertResult::Splitted { parent: (2, 2), right: Node { data: [(3, 3)] }}.
 
-        if self.size <= B_MAX_NODES {
-            return InsertResult::Fitted;
-        }
+            let mut node = Box::new(Node::new());
+            self.size = B_MAX_NODES / 2;
+            node.size = B_MAX_NODES / 2;
 
-        // violate B-Tree invariant, then split node
-        let mut node = Box::new(Node::new());
-        self.size = B_MAX_NODES / 2;
-        node.size = B_MAX_NODES / 2;
+            match edge_index.cmp(&B_MID_INDEX) {
+                Ordering::Less => {
+                    // on [(1, _), (2, _)], insert (0, _) with edge_index = 0
+                    let mid = self.data.remove(B_MID_INDEX - 1);
+                    self.data.insert(edge_index, (key, value));
+                    node.data = self.data.split_off(B_MID_INDEX);
 
-        node.data = self.data.split_off(B_MID_INDEX + 1);
+                    debug_assert!(self.data.len() == B_MID_INDEX);
+                    debug_assert!(node.data.len() == B_MID_INDEX);
 
-        let mid = self.data.pop().unwrap();
+                    InsertResult::Splitted {
+                        parent: mid,
+                        right: node,
+                    }
+                }
+                Ordering::Equal => {
+                    // on [(0, _), (2, _)], insert (1, _) with edge_index = 1
+                    let mid = (key, value);
+                    node.data = self.data.split_off(B_MID_INDEX);
 
-        InsertResult::Splitted {
-            parent: mid,
-            right: node,
+                    debug_assert!(self.data.len() == B_MID_INDEX);
+                    debug_assert!(node.data.len() == B_MID_INDEX);
+
+                    InsertResult::Splitted {
+                        parent: mid,
+                        right: node,
+                    }
+                }
+                Ordering::Greater => {
+                    // on [(0, _), (1, _)], insert (2, _) with edge_index = 2
+                    let mid = self.data.remove(B_MID_INDEX);
+                    self.data.insert(edge_index - 1, (key, value));
+                    node.data = self.data.split_off(B_MID_INDEX);
+
+                    debug_assert!(self.data.len() == B_MID_INDEX);
+                    debug_assert!(node.data.len() == B_MID_INDEX);
+
+                    InsertResult::Splitted {
+                        parent: mid,
+                        right: node,
+                    }
+                }
+            }
         }
     }
 
@@ -97,29 +135,83 @@ where
         value: V,
         edge: Box<Node<K, V>>,
     ) -> InsertResult<K, V> {
-        self.size += 1;
+        if self.size < B_MAX_NODES {
+            self.size += 1;
+            self.data.insert(edge_index, (key, value));
+            self.edges.insert(edge_index + 1, edge);
 
-        self.data.insert(edge_index, (key, value));
-        self.edges.insert(edge_index + 1, edge);
+            InsertResult::Fitted
+        } else {
+            // split node into middle (key, value) and
+            // two leaf nodes that the left one is connected with parent and the right one is disconnected.
+            // ex) Let Node { data: [(x, _), ... ]} Node_x.
+            // On 2-3 tree, the leaf (key, value): parent-Node { data: [(1, 1), (5, 5)], edges: [Node_0, Node_2, Node_6] } and try inserting (3, 3) and Node_4:
+            // Make parent-Node { data: [(1, 1)], edges: [Node_0, Node_2] }
+            // and return InsertResult::Splitted { parent: (3, 3), right: Node { data: [(5, 5)], edges: [Node_4, Node_6]} }
 
-        if self.size <= B_MAX_NODES {
-            return InsertResult::Fitted;
-        }
+            let mut node = Box::new(Node::new());
+            self.size = B_MAX_NODES / 2;
+            node.size = B_MAX_NODES / 2;
+            node.depth = self.depth;
 
-        // violate B-tree invariant, then split node with splitting edges
-        let mut node = Box::new(Node::new());
-        self.size = B_MAX_NODES / 2;
-        node.size = B_MAX_NODES / 2;
-        node.depth = self.depth;
+            match edge_index.cmp(&B_MID_INDEX) {
+                Ordering::Less => {
+                    // on Node { data: [(3, _), (5, _)], edges: [Node_0, Node_4, Node_6] }, insert (1, _) and Node_2 with edge_index = 0
+                    let mid = self.data.remove(B_MID_INDEX - 1);
+                    self.data.insert(edge_index, (key, value));
+                    node.data = self.data.split_off(B_MID_INDEX);
 
-        node.data = self.data.split_off(B_MID_INDEX + 1);
-        node.edges = self.edges.split_off(B_MID_INDEX + 1);
+                    node.edges = self.edges.split_off(B_MID_INDEX);
+                    self.edges.insert(edge_index + 1, edge);
 
-        let mid = self.data.pop().unwrap();
+                    debug_assert!(self.data.len() == B_MID_INDEX);
+                    debug_assert!(self.edges.len() == B_MID_INDEX + 1);
+                    debug_assert!(node.data.len() == B_MID_INDEX);
+                    debug_assert!(node.edges.len() == B_MID_INDEX + 1);
 
-        InsertResult::Splitted {
-            parent: mid,
-            right: node,
+                    InsertResult::Splitted {
+                        parent: mid,
+                        right: node,
+                    }
+                }
+                Ordering::Equal => {
+                    // on Node { data: [(1, _), (5, _)], edges: [Node_0, Node_2, Node_6] }, insert (3, _) and Node_4 with edge_index = 1
+                    let mid = (key, value);
+                    node.data = self.data.split_off(B_MID_INDEX);
+
+                    node.edges.push(edge);
+                    node.edges.extend(self.edges.split_off(B_MID_INDEX + 1));
+
+                    debug_assert!(self.data.len() == B_MID_INDEX);
+                    debug_assert!(self.edges.len() == B_MID_INDEX + 1);
+                    debug_assert!(node.data.len() == B_MID_INDEX);
+                    debug_assert!(node.edges.len() == B_MID_INDEX + 1);
+
+                    InsertResult::Splitted {
+                        parent: mid,
+                        right: node,
+                    }
+                }
+                Ordering::Greater => {
+                    // on Node { data: [(1, _), (3, _)], edges: [Node_0, Node_2, Node_4] }, insert (5, _) and Node_6 with edge_index = 2
+                    let mid = self.data.remove(B_MID_INDEX);
+                    self.data.insert(edge_index - 1, (key, value));
+                    node.data = self.data.split_off(B_MID_INDEX);
+
+                    node.edges = self.edges.split_off(B_MID_INDEX + 1);
+                    node.edges.insert(edge_index - B_MID_INDEX, edge);
+
+                    debug_assert!(self.data.len() == B_MID_INDEX);
+                    debug_assert!(self.edges.len() == B_MID_INDEX + 1);
+                    debug_assert!(node.data.len() == B_MID_INDEX);
+                    debug_assert!(node.edges.len() == B_MID_INDEX + 1);
+
+                    InsertResult::Splitted {
+                        parent: mid,
+                        right: node,
+                    }
+                }
+            }
         }
     }
 }
@@ -500,7 +592,9 @@ where
                         let new_sibling = parent.data.remove(edge_index - 1);
                         let left_sibling = parent.edges[edge_index - 1].as_mut();
                         left_sibling.size -= 1;
-                        parent.data.insert(edge_index - 1, left_sibling.data.pop().unwrap());
+                        parent
+                            .data
+                            .insert(edge_index - 1, left_sibling.data.pop().unwrap());
                         let moved_edge = left_sibling.edges.pop();
 
                         let current = parent.edges[edge_index].as_mut();
@@ -589,13 +683,7 @@ where
                             None
                         };
 
-                        count_nodes(
-                            n,
-                            depth - 1,
-                            root_depth,
-                            from,
-                            to,
-                        )
+                        count_nodes(n, depth - 1, root_depth, from, to)
                     })
                     .sum::<usize>()
         }

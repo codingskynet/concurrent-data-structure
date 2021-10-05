@@ -466,5 +466,4 @@ fn test_remove_btree() {
 #[test]
 fn stress_btree() {
     stress_sequential::<String, BTree<_, _>>(100_000);
-
 }
