@@ -1,4 +1,3 @@
-use cds::btree::BTree;
 use cds::map::ConcurrentMap;
 use cds::map::SequentialMap;
 use cds::util::random::Random;
