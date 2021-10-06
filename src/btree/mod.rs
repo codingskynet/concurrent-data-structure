@@ -214,6 +214,40 @@ where
             }
         }
     }
+
+    /// find the leftmost node from the tree whose root is self
+    fn find_begin(&mut self) -> (Vec<(NonNull<Node<K, V>>, usize)>, &mut Node<K, V>) {
+        let mut parents = Vec::new();
+        let mut target = NonNull::from(self);
+
+        loop {
+            let target_mut = unsafe { target.as_mut() };
+
+            if target_mut.depth == 0 {
+                return (parents, target_mut);
+            }
+
+            parents.push((target, 0));
+            target = NonNull::from(target_mut.edges.first_mut().unwrap().as_mut());
+        }
+    }
+
+    /// find the rightmost node from the tree whose root is self
+    fn find_end(&mut self) -> (Vec<(NonNull<Node<K, V>>, usize)>, &mut Node<K, V>) {
+        let mut parents = Vec::new();
+        let mut target = NonNull::from(self);
+
+        loop {
+            let target_mut = unsafe { target.as_mut() };
+
+            if target_mut.depth == 0 {
+                return (parents, target_mut);
+            }
+
+            parents.push((target, target_mut.size));
+            target = NonNull::from(target_mut.edges.last_mut().unwrap().as_mut());
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -364,72 +398,36 @@ where
         if current.depth == 0 {
             current.size -= 1;
 
-            // exceptionally, if the root is leaf, just remove it
-            if unsafe { self.root.as_ref().depth } == 0 {
+            // if the leaf node has at least one or root, just return
+            if current.size > 0 || unsafe { self.root.as_ref().depth } == 0 {
                 return value;
             }
         } else {
             // the current is internal node, then find predecessor node or successor node (key, value)
 
-            // find predecessor
-            let mut flag = false;
-            {
-                let mut parents: Vec<(NonNull<Node<K, V>>, usize)> =
-                    vec![(cursor.current, value_index)];
-                let mut target = NonNull::from(current.edges[value_index].as_mut());
+            // try replace with predecessor or successor
+            // if the leaf node has at least two pairs of (key, value), just return after replacing since it does not need to rebalance
+            let (_, predecessor) = current.edges[value_index].find_end();
 
-                loop {
-                    let target_mut = unsafe { target.as_mut() };
+            if predecessor.size > 1 {
+                predecessor.size -= 1;
+                let swapped_datum = predecessor.data.pop().unwrap();
+                current.data.insert(value_index, swapped_datum);
 
-                    if target_mut.depth == 0 {
-                        if target_mut.size == 1 {
-                            break;
-                        }
+                return value;
+            } else {
+                let (parents, successor) = current.edges[value_index + 1].find_begin();
+                successor.size -= 1;
+                let swapped_datum = successor.data.remove(0);
+                current.data.insert(value_index, swapped_datum);
 
-                        target_mut.size -= 1;
-                        let swapped_datum = target_mut.data.pop().unwrap();
-                        current.data.insert(value_index, swapped_datum);
-
-                        current = target_mut;
-                        cursor.ancestors.extend(parents);
-                        flag = true;
-                        break;
-                    }
-
-                    parents.push((target, target_mut.size));
-                    target = NonNull::from(target_mut.edges.last_mut().unwrap().as_mut());
+                if successor.size > 0 {
+                    return value;
                 }
+
+                cursor.ancestors.push((cursor.current, value_index + 1));
+                cursor.ancestors.extend(parents);
             }
-
-            // find successor
-            if !flag {
-                let mut parents: Vec<(NonNull<Node<K, V>>, usize)> =
-                    vec![(cursor.current, value_index + 1)];
-                let mut target = NonNull::from(current.edges[value_index + 1].as_mut());
-
-                loop {
-                    let target_mut = unsafe { target.as_mut() };
-
-                    if target_mut.depth == 0 {
-                        target_mut.size -= 1;
-                        let swapped_datum = target_mut.data.remove(0);
-
-                        current.data.insert(value_index, swapped_datum);
-
-                        current = target_mut;
-                        cursor.ancestors.extend(parents);
-                        break;
-                    }
-
-                    parents.push((target, 0));
-                    target = NonNull::from(target_mut.edges.first_mut().unwrap().as_mut());
-                }
-            }
-        }
-
-        // there is no bubble since the leaf node has at least one (key, value)
-        if current.depth == 0 && current.size > 0 {
-            return value;
         }
 
         // start to move the empty node to root
