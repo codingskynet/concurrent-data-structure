@@ -142,7 +142,7 @@ where
 {
     fn new(tree: &AVLTree<K, V>) -> Cursor<K, V> {
         let cursor = Cursor {
-            ancestors: vec![],
+            ancestors: Vec::with_capacity(tree.get_height() + 1),
             current: tree.root,
             dir: Dir::Right,
         };
@@ -307,7 +307,11 @@ where
 
     /// get the height of the tree
     pub fn get_height(&self) -> usize {
-        unsafe { self.root.as_ref().right.as_ref().unwrap().height as usize }
+        if let Some(node) = unsafe { self.root.as_ref().right.as_ref() } {
+            node.height as usize
+        } else {
+            0
+        }
     }
 }
 
