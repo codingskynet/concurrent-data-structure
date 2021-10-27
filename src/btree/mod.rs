@@ -16,6 +16,16 @@ struct Node<K, V> {
     values: [V; B_MAX_NODES],
 }
 
+impl<K, V> Drop for Node<K, V> {
+    fn drop(&mut self) {
+        if self.size > 0 {
+            panic!("The node should be emptied before dropping!")
+        } else {
+            panic!("Please use mem::forget");
+        }
+    }
+}
+
 impl<K: Debug, V: Debug> Debug for Node<K, V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Node")
@@ -149,12 +159,12 @@ where
                         slice_insert(self.mut_values(), edge_index, value);
 
                         ptr::copy_nonoverlapping(
-                            self.keys.as_mut_ptr().add(B_MID_INDEX + 1),
+                            self.keys.as_mut_ptr().add(B_MID_INDEX),
                             node.keys.as_mut_ptr(),
                             B_MAX_NODES - B_MID_INDEX,
                         );
                         ptr::copy_nonoverlapping(
-                            self.values.as_mut_ptr().add(B_MID_INDEX + 1),
+                            self.values.as_mut_ptr().add(B_MID_INDEX),
                             node.values.as_mut_ptr(),
                             B_MAX_NODES - B_MID_INDEX,
                         );
@@ -176,12 +186,12 @@ where
 
                     unsafe {
                         ptr::copy_nonoverlapping(
-                            self.keys.as_mut_ptr().add(B_MID_INDEX + 1),
+                            self.keys.as_mut_ptr().add(B_MID_INDEX),
                             node.keys.as_mut_ptr(),
                             B_MAX_NODES - B_MID_INDEX,
                         );
                         ptr::copy_nonoverlapping(
-                            self.values.as_mut_ptr().add(B_MID_INDEX + 1),
+                            self.values.as_mut_ptr().add(B_MID_INDEX),
                             node.values.as_mut_ptr(),
                             B_MAX_NODES - B_MID_INDEX,
                         );
@@ -585,18 +595,18 @@ where
     }
 
     fn remove_recursive(&mut self, mut cursor: Cursor<K, V>, value_index: usize) -> V {
-        let mut current = unsafe { cursor.current.as_mut() };
+        let current = unsafe { cursor.current.as_mut() };
 
         // let value = current.data.remove(value_index).1;
         // let value = current.values[value_index];
 
         let value = if current.depth == 0 {
-            current.size -= 1;
-
             let value = unsafe {
                 let _ = slice_remove(current.mut_keys(), value_index);
                 slice_remove(current.mut_values(), value_index)
             };
+
+            current.size -= 1;
 
             // if the leaf node has at least one or root, just return
             if current.size > 0 || unsafe { self.root.as_ref().depth } == 0 {
@@ -613,27 +623,34 @@ where
             let (_, predecessor) = iter.nth(value_index).unwrap().find_end();
 
             if predecessor.size > 1 {
-                predecessor.size -= 1;
-                let idx = predecessor.size;
+                println!("use predecessor");
+                let idx = predecessor.size - 1;
 
-                let swapped_value = unsafe {
-                    let _ = slice_remove(predecessor.mut_keys(), idx);
-                    slice_remove(predecessor.mut_values(), idx)
+                unsafe {
+                    let swapped_k = slice_remove(predecessor.mut_keys(), idx);
+                    let swapped_v = slice_remove(predecessor.mut_values(), idx);
+
+                    predecessor.size -= 1;
+
+                    ptr::write(current.keys.as_mut_ptr().add(value_index), swapped_k);
+                    let value = mem::replace(&mut current.values[value_index], swapped_v);
+
+                    return value;
                 };
-
-                let value = mem::replace(&mut current.values[value_index], swapped_value);
-
-                return value;
             } else {
+                println!("use successor");
                 let (parents, successor) = iter.nth(0).unwrap().find_begin();
-                successor.size -= 1;
 
-                let swapped_value = unsafe {
-                    let _ = slice_remove(predecessor.mut_keys(), 0);
-                    slice_remove(predecessor.mut_values(), 0)
+                let value = unsafe {
+                    let swapped_k = slice_remove(successor.mut_keys(), 0);
+                    let swapped_v = slice_remove(successor.mut_values(), 0);
+
+                    successor.size -= 1;
+
+                    ptr::write(current.keys.as_mut_ptr().add(value_index), swapped_k);
+
+                    mem::replace(&mut current.values[value_index], swapped_v)
                 };
-
-                let value = mem::replace(&mut current.values[value_index], swapped_value);
 
                 if successor.size > 0 {
                     return value;
@@ -650,11 +667,12 @@ where
         // I use left-hand rule
         while let Some((mut parent, edge_index)) = cursor.ancestors.pop() {
             let parent = unsafe { parent.as_mut() };
+            // println!("parent: {:?}", parent);
             // let current = parent.edges[edge_index].as_mut();
             // the only one that uses right-hand rule since this is the rightmost node
             if edge_index == 0 {
                 let right_sibling = unsafe {
-                    &mut *(parent.edges.get_unchecked_mut(edge_index + 1) as *mut Box<Node<K, V>>)
+                    &mut **(parent.edges.get_unchecked_mut(edge_index + 1) as *mut Box<Node<K, V>>)
                 };
 
                 // parent has one (key, value), therefore it is to be empty node.
@@ -663,13 +681,13 @@ where
 
                     if right_sibling.size == 1 {
                         // CASE 1
-                        // println!("CASE 1");
-                        let current = unsafe { ptr::read(parent.edges.as_ptr().add(0)) };
+                        println!("CASE 1");
 
-                        right_sibling.size += 1;
+                        let current = unsafe { slice_remove(parent.mut_edges(), 0) };
                         parent.size -= 1; // make empty node that has only one edge
                         debug_assert!(parent.size == 0);
 
+                        right_sibling.size += 1;
                         unsafe {
                             slice_insert(
                                 right_sibling.mut_keys(),
@@ -693,11 +711,10 @@ where
                             }
                         }
 
-                        drop(current);
+                        mem::forget(current);
                     } else {
                         // CASE 2
-                        // println!("CASE 2");
-                        right_sibling.size -= 1;
+                        println!("CASE 2");
 
                         let (new_parent_key, new_parent_value) = unsafe {
                             (
@@ -707,22 +724,34 @@ where
                         };
 
                         let current = parent.edges[edge_index].as_mut();
-                        current.size += 1;
-                        current.keys[0] = mem::replace(&mut parent.keys[0], new_parent_key);
-                        current.values[0] = mem::replace(&mut parent.values[0], new_parent_value);
 
-                        if current.depth > 0 {
-                            current.edges[1] =
-                                unsafe { slice_remove(right_sibling.mut_edges(), 0) };
+                        current.size += 1;
+                        unsafe {
+                            ptr::write(
+                                current.keys.as_mut_ptr().add(0),
+                                mem::replace(&mut parent.keys[0], new_parent_key),
+                            );
+                            ptr::write(
+                                current.values.as_mut_ptr().add(0),
+                                mem::replace(&mut parent.values[0], new_parent_value),
+                            );
+
+                            if current.depth > 0 {
+                                // current.size == 1
+                                ptr::write(
+                                    current.edges.as_mut_ptr().add(current.size),
+                                    slice_remove(right_sibling.mut_edges(), 0),
+                                );
+                            }
                         }
+                        right_sibling.size -= 1;
 
                         break;
                     }
                 } else {
                     if right_sibling.size == 1 {
                         // CASE 3
-                        // println!("CASE 3");
-                        parent.size -= 1;
+                        println!("CASE 3");
                         right_sibling.size += 1;
                         unsafe {
                             slice_insert(
@@ -738,6 +767,7 @@ where
                         }
 
                         let current = unsafe { slice_remove(parent.mut_edges(), edge_index) };
+                        parent.size -= 1;
 
                         if current.depth > 0 {
                             unsafe {
@@ -745,27 +775,32 @@ where
                                     right_sibling.mut_edges(),
                                     0,
                                     ptr::read(current.edges.as_ptr().add(0)),
-                                )
-                            };
+                                );
+                            }
                         }
 
-                        drop(current);
+                        mem::forget(current);
                         break;
                     } else {
                         // CASE 4
-                        // println!("CASE 4");
+                        println!("CASE 4");
                         let current = unsafe {
-                            &mut *(parent.edges.get_unchecked_mut(edge_index)
+                            &mut **(parent.edges.get_unchecked_mut(edge_index)
                                 as *mut Box<Node<K, V>>)
                         };
                         current.size += 1;
                         unsafe {
-                            current.keys[0] = slice_remove(parent.mut_keys(), edge_index);
-                            current.values[0] = slice_remove(parent.mut_values(), edge_index);
+                            ptr::write(
+                                current.keys.as_mut_ptr().add(0),
+                                slice_remove(parent.mut_keys(), edge_index),
+                            );
+                            ptr::write(
+                                current.values.as_mut_ptr().add(0),
+                                slice_remove(parent.mut_values(), edge_index),
+                            );
                         };
                         debug_assert!(current.size == 1);
 
-                        right_sibling.size -= 1;
                         unsafe {
                             slice_insert(
                                 parent.mut_keys(),
@@ -777,12 +812,10 @@ where
                                 edge_index,
                                 slice_remove(right_sibling.mut_values(), 0),
                             );
-                        }
 
-                        if current.depth > 0 {
-                            let idx = current.size;
+                            if current.depth > 0 {
+                                let idx = current.size;
 
-                            unsafe {
                                 slice_insert(
                                     current.mut_edges(),
                                     idx,
@@ -790,111 +823,146 @@ where
                                 );
                             }
                         }
+                        right_sibling.size -= 1;
 
                         break;
                     }
                 }
             } else {
                 let left_sibling = unsafe {
-                    &mut *(parent.edges.get_unchecked_mut(edge_index - 1) as *mut Box<Node<K, V>>)
+                    &mut **(parent.edges.get_unchecked_mut(edge_index - 1) as *mut Box<Node<K, V>>)
                 };
 
                 if parent.size == 1 {
                     if left_sibling.size == 1 {
                         // CASE 5
-                        // println!("CASE 5");
+                        println!("CASE 5");
                         let current = unsafe { ptr::read(parent.edges.as_ptr().add(edge_index)) };
 
+                        // TODO: should use slice_insert?
                         left_sibling.size += 1;
+                        unsafe {
+                            ptr::write(
+                                left_sibling.keys.as_mut_ptr().add(left_sibling.size - 1),
+                                ptr::read(parent.keys.as_ptr().add(parent.size - 1)),
+                            );
+                            ptr::write(
+                                left_sibling.values.as_mut_ptr().add(left_sibling.size - 1),
+                                ptr::read(parent.values.as_ptr().add(parent.size - 1)),
+                            );
+
+                            if current.depth > 0 {
+                                ptr::write(
+                                    left_sibling.edges.as_mut_ptr().add(left_sibling.size),
+                                    ptr::read(current.edges.as_ptr().add(0)),
+                                );
+                            }
+                        };
                         parent.size -= 1;
                         debug_assert!(parent.size == 0);
 
-                        // TODO: should use slice_insert?
-                        left_sibling.keys[left_sibling.size - 1] =
-                            unsafe { ptr::read(parent.keys.as_ptr().add(parent.size)) };
-                        left_sibling.values[left_sibling.size - 1] =
-                            unsafe { ptr::read(parent.values.as_ptr().add(parent.size)) };
-
-                        if current.depth > 0 {
-                            left_sibling.edges[left_sibling.size] =
-                                unsafe { ptr::read(current.edges.as_ptr().add(0)) };
-                        }
-
-                        drop(current);
+                        mem::forget(current);
                     } else {
                         // CASE 6
-                        // println!("CASE 6");
+                        println!("CASE 6");
                         let current = parent.edges[edge_index].as_mut();
 
                         current.size += 1;
-                        left_sibling.size -= 1;
-                        current.keys[0] = mem::replace(&mut parent.keys[parent.size - 1], unsafe {
-                            ptr::read(left_sibling.keys.as_ptr().add(left_sibling.size))
-                        });
-                        current.values[0] =
-                            mem::replace(&mut parent.values[parent.size - 1], unsafe {
-                                ptr::read(left_sibling.values.as_ptr().add(left_sibling.size))
-                            });
+                        unsafe {
+                            ptr::write(
+                                current.keys.as_mut_ptr().add(0),
+                                mem::replace(
+                                    &mut parent.keys[parent.size - 1],
+                                    ptr::read(left_sibling.keys.as_ptr().add(left_sibling.size - 1)),
+                                ),
+                            );
+                            ptr::write(
+                                current.values.as_mut_ptr().add(0),
+                                mem::replace(
+                                    &mut parent.values[parent.size - 1],
+                                    ptr::read(left_sibling.values.as_ptr().add(left_sibling.size - 1)),
+                                ),
+                            );
 
-                        if current.depth > 0 {
-                            unsafe {
+                            if current.depth > 0 {
                                 slice_insert(
                                     current.mut_edges(),
                                     0,
                                     ptr::read(
-                                        left_sibling.edges.as_ptr().add(left_sibling.size + 1),
+                                        left_sibling.edges.as_ptr().add(left_sibling.size),
                                     ),
                                 );
                             }
                         }
+                        left_sibling.size -= 1;
 
                         break;
                     }
                 } else {
                     if left_sibling.size == 1 {
                         // CASE 7
-                        // println!("CASE 7");
-                        parent.size -= 1;
+                        println!("CASE 7");
+
                         left_sibling.size += 1;
-                        left_sibling.keys[left_sibling.size - 1] =
-                            unsafe { ptr::read(parent.keys.as_ptr().add(edge_index - 1)) };
-                        left_sibling.values[left_sibling.size - 1] =
-                            unsafe { ptr::read(parent.values.as_ptr().add(edge_index - 1)) };
+                        unsafe {
+                            ptr::write(
+                                left_sibling.keys.as_mut_ptr().add(left_sibling.size - 1),
+                                ptr::read(parent.keys.as_ptr().add(edge_index - 1)),
+                            );
+                            ptr::write(
+                                left_sibling.values.as_mut_ptr().add(left_sibling.size - 1),
+                                ptr::read(parent.values.as_ptr().add(edge_index - 1)),
+                            );
 
-                        let current = unsafe { ptr::read(parent.edges.as_ptr().add(edge_index)) };
+                            let current = ptr::read(parent.edges.as_ptr().add(edge_index));
 
-                        if current.depth > 0 {
-                            left_sibling.edges[left_sibling.size] =
-                                unsafe { ptr::read(current.edges.as_ptr().add(0)) };
+                            if current.depth > 0 {
+                                ptr::write(
+                                    left_sibling.edges.as_mut_ptr().add(left_sibling.size),
+                                    ptr::read(current.edges.as_ptr().add(0)),
+                                );
+                            }
+
+                            mem::forget(current);
                         }
+                        parent.size -= 1;
 
-                        drop(current);
                         break;
                     } else {
                         // CASE 8
-                        // println!("CASE 8");
+                        println!("CASE 8");
                         let current = parent.edges[edge_index].as_mut();
 
-                        left_sibling.size -= 1;
-                        current.keys[0] = mem::replace(&mut parent.keys[edge_index - 1], unsafe {
-                            ptr::read(left_sibling.keys.as_ptr().add(left_sibling.size))
-                        });
-                        current.values[0] =
-                            mem::replace(&mut parent.values[edge_index - 1], unsafe {
-                                ptr::read(left_sibling.values.as_ptr().add(left_sibling.size))
-                            });
+                        current.size += 1;
+                        unsafe {
+                            ptr::write(
+                                current.keys.as_mut_ptr().add(0),
+                                mem::replace(
+                                    &mut parent.keys[edge_index - 1],
+                                    ptr::read(
+                                        left_sibling.keys.as_ptr().add(left_sibling.size - 1),
+                                    ),
+                                ),
+                            );
+                            ptr::write(
+                                current.values.as_mut_ptr().add(0),
+                                mem::replace(
+                                    &mut parent.values[edge_index - 1],
+                                    ptr::read(
+                                        left_sibling.values.as_ptr().add(left_sibling.size - 1),
+                                    ),
+                                ),
+                            );
 
-                        if current.depth > 0 {
-                            unsafe {
+                            if current.depth > 0 {
                                 slice_insert(
                                     current.mut_edges(),
                                     0,
-                                    ptr::read(
-                                        left_sibling.edges.as_ptr().add(left_sibling.size + 1),
-                                    ),
+                                    ptr::read(left_sibling.edges.as_ptr().add(left_sibling.size)),
                                 );
                             }
                         }
+                        left_sibling.size -= 1;
 
                         break;
                     }
@@ -902,11 +970,13 @@ where
             }
         }
 
-        let root = unsafe { ptr::read(self.root.as_ptr()) };
+        let root = unsafe { self.root.as_mut() };
 
         // root is now empty. Swap with unique edge
         if root.size == 0 {
-            self.root = unsafe { Box::leak(ptr::read(root.edges.as_ptr().add(0))).into() };
+            let old_root: Box<Node<K, V>> = unsafe { Box::from_raw(root as *mut _) };
+            self.root = unsafe { Box::leak(ptr::read(old_root.edges.as_ptr().add(0))).into() };
+            mem::forget(old_root);
         }
 
         value
