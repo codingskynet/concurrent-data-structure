@@ -54,7 +54,7 @@ unsafe fn slice_insert<T>(ptr: &mut [T], index: usize, value: T) {
         ptr::copy(ptr.add(index), ptr.add(index + 1), size - index - 1);
     }
 
-    *ptr.add(index) = value;
+    ptr::write(ptr.add(index), value);
 }
 
 /// remove value from [T] and remain last area without any init
@@ -117,7 +117,7 @@ where
     V: Debug,
 {
     fn insert_leaf(&mut self, edge_index: usize, key: K, value: V) -> InsertResult<K, V> {
-        if self.size <= B_MAX_NODES {
+        if self.size < B_MAX_NODES {
             self.size += 1;
 
             unsafe {
@@ -133,7 +133,6 @@ where
             // Make parent-[(1, 1)] and return InsertResult::Splitted { parent: (2, 2), right: Node { data: [(3, 3)] }}.
 
             let mut node = Box::new(Node::new());
-            self.size = B_MAX_NODES / 2;
             node.size = B_MAX_NODES / 2;
 
             match edge_index.cmp(&B_MID_INDEX) {
@@ -159,6 +158,8 @@ where
                             node.values.as_mut_ptr(),
                             B_MAX_NODES - B_MID_INDEX,
                         );
+
+                        self.size = B_MAX_NODES / 2;
 
                         // debug_assert!(self.data.len() == B_MID_INDEX);
                         // debug_assert!(node.data.len() == B_MID_INDEX);
@@ -186,6 +187,8 @@ where
                         );
                     }
 
+                    self.size = B_MAX_NODES / 2;
+
                     // debug_assert!(self.data.len() == B_MID_INDEX);
                     // debug_assert!(node.data.len() == B_MID_INDEX);
 
@@ -206,15 +209,17 @@ where
                         slice_insert(self.mut_values(), edge_index - 1, value);
 
                         ptr::copy_nonoverlapping(
-                            self.keys.as_mut_ptr().add(B_MID_INDEX + 1),
+                            self.keys.as_mut_ptr().add(B_MID_INDEX),
                             node.keys.as_mut_ptr(),
                             B_MAX_NODES - B_MID_INDEX,
                         );
                         ptr::copy_nonoverlapping(
-                            self.values.as_mut_ptr().add(B_MID_INDEX + 1),
+                            self.values.as_mut_ptr().add(B_MID_INDEX),
                             node.values.as_mut_ptr(),
                             B_MAX_NODES - B_MID_INDEX,
                         );
+
+                        self.size = B_MAX_NODES / 2;
 
                         // debug_assert!(self.data.len() == B_MID_INDEX);
                         // debug_assert!(node.data.len() == B_MID_INDEX);
@@ -236,7 +241,7 @@ where
         value: V,
         edge: Box<Node<K, V>>,
     ) -> InsertResult<K, V> {
-        if self.size <= B_MAX_NODES {
+        if self.size < B_MAX_NODES {
             self.size += 1;
 
             unsafe {
@@ -255,7 +260,6 @@ where
             // and return InsertResult::Splitted { parent: (3, 3), right: Node { data: [(5, 5)], edges: [Node_4, Node_6]} }
 
             let mut node = Box::new(Node::new());
-            self.size = B_MAX_NODES / 2;
             node.size = B_MAX_NODES / 2;
             node.depth = self.depth;
 
@@ -274,21 +278,24 @@ where
                         slice_insert(self.mut_values(), edge_index, value);
 
                         ptr::copy_nonoverlapping(
-                            self.keys.as_mut_ptr().add(B_MID_INDEX + 1),
+                            self.keys.as_mut_ptr().add(B_MID_INDEX),
                             node.keys.as_mut_ptr(),
                             B_MAX_NODES - B_MID_INDEX,
                         );
                         ptr::copy_nonoverlapping(
-                            self.values.as_mut_ptr().add(B_MID_INDEX + 1),
+                            self.values.as_mut_ptr().add(B_MID_INDEX),
                             node.values.as_mut_ptr(),
                             B_MAX_NODES - B_MID_INDEX,
                         );
 
                         ptr::copy_nonoverlapping(
-                            self.edges.as_mut_ptr().add(B_MID_INDEX + 1),
+                            self.edges.as_mut_ptr().add(B_MID_INDEX),
                             node.edges.as_mut_ptr(),
                             (B_MAX_NODES + 1) - B_MID_INDEX,
                         );
+                        slice_insert(self.mut_edges(), edge_index, edge);
+
+                        self.size = B_MAX_NODES / 2;
 
                         // debug_assert!(self.data.len() == B_MID_INDEX);
                         // debug_assert!(self.edges.len() == B_MID_INDEX + 1);
@@ -307,22 +314,24 @@ where
                         let mid = (key, value);
 
                         ptr::copy_nonoverlapping(
-                            self.keys.as_mut_ptr().add(B_MID_INDEX + 1),
+                            self.keys.as_mut_ptr().add(B_MID_INDEX),
                             node.keys.as_mut_ptr(),
                             B_MAX_NODES - B_MID_INDEX,
                         );
                         ptr::copy_nonoverlapping(
-                            self.values.as_mut_ptr().add(B_MID_INDEX + 1),
+                            self.values.as_mut_ptr().add(B_MID_INDEX),
                             node.values.as_mut_ptr(),
                             B_MAX_NODES - B_MID_INDEX,
                         );
 
-                        node.edges[0] = edge;
+                        ptr::write(node.edges.as_mut_ptr(), edge);
                         ptr::copy_nonoverlapping(
-                            self.edges.as_mut_ptr().add(B_MID_INDEX + 2),
+                            self.edges.as_mut_ptr().add(B_MID_INDEX + 1),
                             node.edges.as_mut_ptr(),
                             (B_MAX_NODES + 1) - (B_MID_INDEX + 1),
                         );
+
+                        self.size = B_MAX_NODES / 2;
 
                         // debug_assert!(self.data.len() == B_MID_INDEX);
                         // debug_assert!(self.edges.len() == B_MID_INDEX + 1);
@@ -347,12 +356,12 @@ where
                         slice_insert(self.mut_values(), edge_index - 1, value);
 
                         ptr::copy_nonoverlapping(
-                            self.keys.as_mut_ptr().add(B_MID_INDEX + 1),
+                            self.keys.as_mut_ptr().add(B_MID_INDEX),
                             node.keys.as_mut_ptr(),
                             B_MAX_NODES - B_MID_INDEX,
                         );
                         ptr::copy_nonoverlapping(
-                            self.values.as_mut_ptr().add(B_MID_INDEX + 1),
+                            self.values.as_mut_ptr().add(B_MID_INDEX),
                             node.values.as_mut_ptr(),
                             B_MAX_NODES - B_MID_INDEX,
                         );
@@ -360,9 +369,11 @@ where
                         ptr::copy_nonoverlapping(
                             self.edges.as_mut_ptr().add(B_MID_INDEX + 1),
                             node.edges.as_mut_ptr(),
-                            (B_MAX_NODES + 1) - B_MID_INDEX,
+                            (B_MAX_NODES + 1) - (B_MID_INDEX + 1),
                         );
-                        slice_insert(self.mut_edges(), edge_index - B_MID_INDEX, edge);
+                        slice_insert(node.mut_edges(), edge_index - B_MID_INDEX, edge);
+
+                        self.size = B_MAX_NODES / 2;
 
                         // debug_assert!(self.data.len() == B_MID_INDEX);
                         // debug_assert!(self.edges.len() == B_MID_INDEX + 1);
@@ -564,10 +575,10 @@ where
         root.depth = depth;
 
         unsafe {
-            root.keys[0] = key;
-            root.values[0] = value;
-            root.edges[0] = Box::from_raw(current as *mut _);
-            root.edges[1] = edge;
+            ptr::write(root.keys.as_mut_ptr(), key);
+            ptr::write(root.values.as_mut_ptr(), value);
+            ptr::write(root.edges.as_mut_ptr(), Box::from_raw(current as *mut _));
+            ptr::write(root.edges.as_mut_ptr().add(1), edge);
         }
 
         self.root = Box::leak(root).into();
@@ -923,11 +934,6 @@ where
                 assert!(node.size > 0 && node.size <= B_MAX_NODES);
             }
 
-            if depth != 0 {
-                assert_eq!(node.size + 1, node.edges.len());
-            }
-
-            // assert_eq!(node.size, node.data.len());
             assert_eq!(node.depth, depth);
 
             if node.size > 0 {
@@ -956,12 +962,11 @@ where
                             None
                         };
 
-                        let to = if index < node.edges.len() - 1 {
+                        let to = if index < node.size {
                             Some(&node.keys[index])
                         } else {
                             None
                         };
-
                         count_nodes(n, depth - 1, root_depth, from, to)
                     })
                     .sum::<usize>()

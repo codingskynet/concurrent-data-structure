@@ -8,10 +8,9 @@ fn test_insert_lookup_btree() {
     let mut tree: BTree<i32, i32> = BTree::new();
 
     for i in 0..num {
-        println!("{}", i);
         assert_eq!(tree.insert(&i, i), Ok(()));
         tree.assert();
-        tree.print();
+        // tree.print();
     }
 
     for i in 0..num {
