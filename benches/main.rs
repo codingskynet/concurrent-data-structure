@@ -4,5 +4,5 @@ mod benchmark;
 pub mod util;
 
 criterion_main! {
-    benchmark::avltree::bench,
+    benchmark::bench,
 }

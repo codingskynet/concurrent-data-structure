@@ -8,7 +8,7 @@ use cds::{avltree::AVLTree, map::SequentialMap};
 use rand::{thread_rng, Rng};
 
 #[test]
-fn test_avl_tree_insert_lookup() {
+fn test_insert_lookup_avl_tree() {
     let mut avl: AVLTree<i32, i32> = AVLTree::new();
 
     for i in 0..65535 {
@@ -26,7 +26,7 @@ fn test_avl_tree_insert_lookup() {
 }
 
 #[test]
-fn test_avl_tree_remove() {
+fn test_remove_avl_tree() {
     let mut avl: AVLTree<i32, i32> = AVLTree::new();
 
     /* make tree like this

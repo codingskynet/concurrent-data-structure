@@ -81,8 +81,8 @@ where
                         "[{:0>10}] InsertNone: ({:?}, {})",
                         i, not_existing_key, value
                     );
-                    assert_eq!(map.insert(&not_existing_key, value), Ok(()));
                     assert_eq!(ref_map.insert(not_existing_key.clone(), value), None);
+                    assert_eq!(map.insert(&not_existing_key, value), Ok(()));
                 }
                 Operation::Lookup => {
                     // should fail
