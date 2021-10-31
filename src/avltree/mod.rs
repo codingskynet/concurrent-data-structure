@@ -14,10 +14,18 @@ use std::{
     usize,
 };
 
-// how to show the structure of node
-// use: unsafe { println!("Show tree info:\n{:?}", self.root.as_ref()) };
-pub struct AVLTree<K: Ord + Clone, V> {
+pub struct AVLTree<K, V> {
     root: NonNull<Node<K, V>>, // root node is dummy for simplicity
+}
+
+impl<K: Debug, V: Debug> Debug for AVLTree<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        unsafe {
+            f.debug_struct("AVLTree")
+                .field("root", self.root.as_ref())
+                .finish()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -36,11 +44,7 @@ struct Node<K, V> {
     right: Option<Box<Node<K, V>>>,
 }
 
-impl<K, V> Default for Node<K, V>
-where
-    K: Default,
-    V: Default,
-{
+impl<K: Default, V: Default> Default for Node<K, V> {
     fn default() -> Self {
         Self::new(K::default(), V::default())
     }
@@ -128,7 +132,6 @@ impl<K, V> Node<K, V> {
 /// ancestors: the parents of the node
 /// current: the node which it sees now.
 /// dir: the direction that it moves on next. If Eq, the cursor cannot move since it arrived the destination node.
-#[derive(Debug)]
 struct Cursor<K, V> {
     ancestors: Vec<(NonNull<Node<K, V>>, Dir)>,
     current: NonNull<Node<K, V>>,
@@ -137,8 +140,8 @@ struct Cursor<K, V> {
 
 impl<'c, K, V> Cursor<K, V>
 where
-    K: Default + Ord + Clone + Debug,
-    V: Default + Debug,
+    K: Default + Ord + Clone,
+    V: Default,
 {
     fn new(tree: &AVLTree<K, V>) -> Cursor<K, V> {
         let cursor = Cursor {
@@ -273,8 +276,8 @@ where
 
 impl<K, V> AVLTree<K, V>
 where
-    K: Default + Ord + Clone + Debug,
-    V: Default + Debug,
+    K: Default + Ord + Clone,
+    V: Default,
 {
     /// find the last state of the cursor by the key
     ///
@@ -317,8 +320,8 @@ where
 
 impl<K, V> SequentialMap<K, V> for AVLTree<K, V>
 where
-    K: Default + Ord + Clone + Debug,
-    V: Default + Debug,
+    K: Default + Ord + Clone,
+    V: Default,
 {
     fn new() -> Self {
         let root = Box::new(Node::default());
@@ -411,7 +414,7 @@ where
     }
 }
 
-impl<K: Ord + Clone, V> Drop for AVLTree<K, V> {
+impl<K, V> Drop for AVLTree<K, V> {
     fn drop(&mut self) {
         // since the struct had 'pointer' instead of 'ownership' of the root,
         // manually drop the root. Then, the childs are dropped recursively.

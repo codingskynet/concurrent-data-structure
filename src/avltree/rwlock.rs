@@ -1,4 +1,5 @@
 use crossbeam_epoch::pin;
+use crossbeam_epoch::unprotected;
 use crossbeam_epoch::Atomic;
 use crossbeam_epoch::Guard;
 use crossbeam_epoch::Owned;
@@ -15,22 +16,48 @@ use std::sync::atomic::Ordering;
 
 use crate::map::ConcurrentMap;
 
-pub struct RwLockAVLTree<K, V> {
-    root: Atomic<Node<K, V>>,
-}
-
-#[derive(Debug)]
 struct Node<K, V> {
     key: K,
     height: AtomicIsize,
     inner: ShardedLock<NodeInner<K, V>>,
 }
 
-#[derive(Debug)]
+impl<K: Debug, V: Debug> Debug for Node<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Node")
+            .field("key", &self.key)
+            .field("height", &self.height.load(Ordering::Relaxed))
+            .field("inner", &*self.inner.read().unwrap())
+            .finish()
+    }
+}
 struct NodeInner<K, V> {
     value: Option<V>,
     left: Atomic<Node<K, V>>,
     right: Atomic<Node<K, V>>,
+}
+
+impl<K: Debug, V: Debug> Debug for NodeInner<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        unsafe {
+            let mut result = f.debug_struct("NodeInner");
+            result.field("value", &self.value);
+
+            if let Some(left) = self.left.load(Ordering::Acquire, unprotected()).as_ref() {
+                result.field("left", &left);
+            } else {
+                result.field("left", &"null");
+            }
+
+            if let Some(right) = self.right.load(Ordering::Acquire, unprotected()).as_ref() {
+                result.field("right", &right);
+            } else {
+                result.field("right", &"null");
+            }
+
+            result.finish()
+        }
+    }
 }
 
 impl<K, V> NodeInner<K, V> {
@@ -422,6 +449,26 @@ impl<'g, K, V> Cursor<'g, K, V> {
     }
 }
 
+pub struct RwLockAVLTree<K, V> {
+    root: Atomic<Node<K, V>>,
+}
+
+impl<K: Debug, V: Debug> Debug for RwLockAVLTree<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        unsafe {
+            f.debug_struct("RwLockAVLTree")
+                .field(
+                    "root",
+                    self.root
+                        .load(Ordering::Acquire, unprotected())
+                        .as_ref()
+                        .unwrap(),
+                )
+                .finish()
+        }
+    }
+}
+
 impl<K, V> RwLockAVLTree<K, V>
 where
     K: Default + Ord + Clone,
@@ -457,7 +504,8 @@ where
     /// get the height of the tree
     pub fn get_height(&self, guard: &Guard) -> usize {
         unsafe {
-            self.root
+            if let Some(node) = self
+                .root
                 .load(Ordering::Relaxed, guard)
                 .as_ref()
                 .unwrap()
@@ -465,39 +513,14 @@ where
                 .read()
                 .unwrap()
                 .right
-                .load(Ordering::Relaxed, guard)
+                .load(Ordering::Acquire, guard)
                 .as_ref()
-                .unwrap()
-                .height
-                .load(Ordering::Acquire) as usize
-        }
-    }
-
-    /// print tree structure
-    pub fn print(&self, guard: &Guard)
-    where
-        K: Debug,
-        V: Debug,
-    {
-        fn print<K: Debug, V: Debug>(node: Shared<Node<K, V>>, guard: &Guard) -> String {
-            if node.is_null() {
-                return "null".to_string();
+            {
+                node.height.load(Ordering::Relaxed) as usize
+            } else {
+                0
             }
-
-            let node = unsafe { node.as_ref().unwrap() };
-            let node_inner = node.inner.read().unwrap();
-
-            format!(
-                "{{key: {:?},  height: {}, value: {:?}, left: {}, right: {}}}",
-                node.key,
-                node.height.load(Ordering::SeqCst),
-                node_inner.value,
-                print(node_inner.left.load(Ordering::Relaxed, guard), guard),
-                print(node_inner.right.load(Ordering::Relaxed, guard), guard)
-            )
         }
-
-        println!("{}", print(self.root.load(Ordering::Relaxed, guard), guard));
     }
 }
 

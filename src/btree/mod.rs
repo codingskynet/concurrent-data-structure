@@ -4,7 +4,7 @@ use std::{cmp::Ordering, mem, ptr::NonNull};
 
 use crate::map::SequentialMap;
 
-const B_MAX_NODES: usize = 12;
+const B_MAX_NODES: usize = 11;
 const B_MID_INDEX: usize = B_MAX_NODES / 2;
 
 // TODO: optimize with MaybeUninit
@@ -121,11 +121,7 @@ impl<K, V> Node<K, V> {
     }
 }
 
-impl<K, V> Node<K, V>
-where
-    K: Debug + Ord,
-    V: Debug,
-{
+impl<K: Ord, V> Node<K, V> {
     fn insert_leaf(&mut self, edge_index: usize, key: K, value: V) -> InsertResult<K, V> {
         if self.size < B_MAX_NODES {
             self.size += 1;
@@ -143,7 +139,7 @@ where
             // Make parent-[(1, 1)] and return InsertResult::Splitted { parent: (2, 2), right: Node { data: [(3, 3)] }}.
 
             let mut node = Box::new(Node::new());
-            node.size = B_MAX_NODES / 2;
+            node.size = B_MAX_NODES - B_MID_INDEX;
 
             match edge_index.cmp(&B_MID_INDEX) {
                 Ordering::Less => {
@@ -169,7 +165,7 @@ where
                             B_MAX_NODES - B_MID_INDEX,
                         );
 
-                        self.size = B_MAX_NODES / 2;
+                        self.size = B_MID_INDEX;
 
                         // debug_assert!(self.data.len() == B_MID_INDEX);
                         // debug_assert!(node.data.len() == B_MID_INDEX);
@@ -197,7 +193,7 @@ where
                         );
                     }
 
-                    self.size = B_MAX_NODES / 2;
+                    self.size = B_MID_INDEX;
 
                     // debug_assert!(self.data.len() == B_MID_INDEX);
                     // debug_assert!(node.data.len() == B_MID_INDEX);
@@ -229,7 +225,7 @@ where
                             B_MAX_NODES - B_MID_INDEX,
                         );
 
-                        self.size = B_MAX_NODES / 2;
+                        self.size = B_MID_INDEX;
 
                         // debug_assert!(self.data.len() == B_MID_INDEX);
                         // debug_assert!(node.data.len() == B_MID_INDEX);
@@ -270,7 +266,7 @@ where
             // and return InsertResult::Splitted { parent: (3, 3), right: Node { data: [(5, 5)], edges: [Node_4, Node_6]} }
 
             let mut node = Box::new(Node::new());
-            node.size = B_MAX_NODES / 2;
+            node.size = B_MAX_NODES - B_MID_INDEX;
             node.depth = self.depth;
 
             match edge_index.cmp(&B_MID_INDEX) {
@@ -305,7 +301,7 @@ where
                         );
                         slice_insert(self.mut_edges(), edge_index + 1, edge);
 
-                        self.size = B_MAX_NODES / 2;
+                        self.size = B_MID_INDEX;
 
                         // debug_assert!(self.data.len() == B_MID_INDEX);
                         // debug_assert!(self.edges.len() == B_MID_INDEX + 1);
@@ -341,7 +337,7 @@ where
                             (B_MAX_NODES + 1) - (B_MID_INDEX + 1),
                         );
 
-                        self.size = B_MAX_NODES / 2;
+                        self.size = B_MID_INDEX;
 
                         // debug_assert!(self.data.len() == B_MID_INDEX);
                         // debug_assert!(self.edges.len() == B_MID_INDEX + 1);
@@ -383,7 +379,7 @@ where
                         );
                         slice_insert(node.mut_edges(), edge_index - B_MID_INDEX, edge);
 
-                        self.size = B_MAX_NODES / 2;
+                        self.size = B_MID_INDEX;
 
                         // debug_assert!(self.data.len() == B_MID_INDEX);
                         // debug_assert!(self.edges.len() == B_MID_INDEX + 1);
@@ -435,7 +431,6 @@ where
     }
 }
 
-#[derive(Debug)]
 struct Cursor<K, V> {
     ancestors: Vec<(NonNull<Node<K, V>>, usize)>, // (parent, index from parent.edges[index])
     current: NonNull<Node<K, V>>,
@@ -450,11 +445,7 @@ enum SearchResult {
     NodeSearch,                    // after Descent, the cursor needs NodeSearch
 }
 
-impl<K, V> Cursor<K, V>
-where
-    K: Ord + Debug,
-    V: Debug,
-{
+impl<K: Ord, V> Cursor<K, V> {
     fn new(tree: &BTree<K, V>) -> Self {
         let depth = unsafe { tree.root.as_ref().depth };
 
@@ -540,11 +531,7 @@ impl<K: Debug, V: Debug> Debug for BTree<K, V> {
     }
 }
 
-impl<K, V> BTree<K, V>
-where
-    K: Ord + Debug,
-    V: Debug,
-{
+impl<K: Ord, V> BTree<K, V> {
     fn find(&self, key: &K) -> Cursor<K, V> {
         let mut cursor = Cursor::new(self);
 
@@ -989,18 +976,10 @@ where
         value
     }
 
-    pub fn print(&self)
-    where
-        K: Debug,
-        V: Debug,
-    {
-        unsafe { println!("{:?}", self.root.as_ref()) };
-    }
-
     pub fn assert(&self) {
         let root = unsafe { self.root.as_ref() };
 
-        fn count_nodes<K: Ord + Debug, V: Debug>(
+        fn count_nodes<K: Ord, V>(
             node: &Node<K, V>,
             depth: usize,
             root_depth: usize,
