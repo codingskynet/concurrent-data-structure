@@ -21,7 +21,7 @@ impl<K, V> Drop for Node<K, V> {
         if self.size > 0 {
             panic!("The node should be emptied before dropping!")
         } else {
-            panic!("Please use mem::forget");
+            panic!("Please use self.forget");
         }
     }
 }
@@ -117,7 +117,29 @@ impl<K, V> Node<K, V> {
     }
 
     fn mut_edges(&mut self) -> &mut [Box<Node<K, V>>] {
-        unsafe { self.edges.get_unchecked_mut(..(self.size + 1)) }
+        if self.depth > 0 {
+            unsafe { self.edges.get_unchecked_mut(..(self.size + 1)) }
+        } else {
+            &mut []
+        }
+    }
+
+    fn forget(mut self) {
+        unsafe {
+            for key in self.mut_keys() {
+                ptr::read(key);
+            }
+
+            for value in self.mut_values() {
+                ptr::read(value);
+            }
+
+            for edge in self.mut_edges() {
+                ptr::read(edge).forget();
+            }
+        }
+
+        mem::forget(self);
     }
 }
 
@@ -528,6 +550,13 @@ impl<K: Debug, V: Debug> Debug for BTree<K, V> {
                 .field("size", &self.size)
                 .finish()
         }
+    }
+}
+
+impl<K, V> Drop for BTree<K, V> {
+    fn drop(&mut self) {
+        let root = unsafe { ptr::read(self.root.as_ptr()) };
+        root.forget();
     }
 }
 

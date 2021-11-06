@@ -112,11 +112,7 @@ impl<K, V> NodeInner<K, V> {
     }
 }
 
-impl<K, V> Default for Node<K, V>
-where
-    K: Default,
-    V: Default,
-{
+impl<K: Default, V: Default> Default for Node<K, V> {
     fn default() -> Self {
         Self::new(K::default(), V::default())
     }
@@ -385,7 +381,7 @@ impl<'g, K, V> Cursor<'g, K, V> {
         let inner_guard = unsafe { root.as_ref().unwrap().inner.read().unwrap() };
 
         let cursor = Cursor {
-            ancestors: vec![],
+            ancestors: Vec::with_capacity(tree.get_height(guard) + 5),
             current: root,
             inner_guard: ManuallyDrop::new(inner_guard),
             dir: Dir::Right,
@@ -469,17 +465,16 @@ impl<K: Debug, V: Debug> Debug for RwLockAVLTree<K, V> {
     }
 }
 
-impl<K, V> RwLockAVLTree<K, V>
-where
-    K: Default + Ord + Clone,
-    V: Default,
-{
+impl<K, V> RwLockAVLTree<K, V> {
     /// find the last state of the cursor by the key
     ///
     /// If there exists the key on the tree, the cursor's current is the node and the dir is Eq.
     /// If there does not exist the key on the tree, the cursor's current is leaf node and the dir is
     /// Left if the key is greater than the key of the node, or Right if the key is less than.
-    fn find<'g>(&self, key: &K, guard: &'g Guard) -> Cursor<'g, K, V> {
+    fn find<'g>(&self, key: &K, guard: &'g Guard) -> Cursor<'g, K, V>
+    where
+        K: Ord,
+    {
         let mut cursor = Cursor::new(self, guard);
 
         loop {

@@ -395,7 +395,7 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
         let inner_guard = unsafe { root.as_ref().unwrap().inner.read_lock() };
 
         let cursor = Cursor {
-            ancestors: vec![],
+            ancestors: Vec::with_capacity(tree.get_height(guard) + 5),
             current: root,
             inner_guard,
             dir: Dir::Right,
@@ -416,15 +416,11 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
             }
 
             unsafe {
-                if *key == self.current.as_ref().unwrap().key {
-                    self.dir = Dir::Eq;
-                    break;
-                } else if *key < self.current.as_ref().unwrap().key {
-                    self.dir = Dir::Left;
-                } else {
-                    // *key > next.key
-                    self.dir = Dir::Right;
-                }
+                self.dir = match key.cmp(&self.current.as_ref().unwrap().key) {
+                    std::cmp::Ordering::Less => Dir::Left,
+                    std::cmp::Ordering::Equal => Dir::Eq,
+                    std::cmp::Ordering::Greater =>  Dir::Right,
+                };
             }
         }
     }
@@ -459,7 +455,7 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
             let next = match self.dir {
                 Dir::Left => self.inner_guard.left.load(Ordering::Relaxed, guard),
                 Dir::Right => self.inner_guard.right.load(Ordering::Relaxed, guard),
-                Dir::Eq => panic!("The node is already arrived."),
+                Dir::Eq => return Err(()),
             };
 
             if !self.inner_guard.validate() {
