@@ -4,64 +4,64 @@ mod util;
 
 use cds::{avltree::AVLTree, btree::BTree};
 use criterion::{criterion_group, Criterion};
-use util::sequential::{bench_mixed_sequential, bench_sequential, bench_mixed_sequential_reference, bench_sequential_reference};
+use util::sequential::{bench_mixed_sequential_map, bench_sequential_map};
 
-const ALREADY_INSERTED: u64 = 1_000_000;
-const TOTAL_OPS: usize = 1_000_000;
-const INSERT_RATE: usize = 30;
-const LOOKUP_RATE: usize = 50;
-const REMOVE_RATE: usize = 20;
+const MAP_ALREADY_INSERTED: u64 = 500_000;
+const MAP_TOTAL_OPS: usize = 500_000;
+const MAP_INSERT_RATE: usize = 30;
+const MAP_LOOKUP_RATE: usize = 50;
+const MAP_REMOVE_RATE: usize = 20;
 
-fn bench_reference_tree(c: &mut Criterion) {
-    bench_sequential_reference(1_000_000, c);
+fn bench_btreemap(c: &mut Criterion) {
+    util::sequential::bench_btreemap(1_000_000, c);
 }
 
-fn bench_mixed_reference_tree(c: &mut Criterion) {
-    assert_eq!(INSERT_RATE + LOOKUP_RATE + REMOVE_RATE, 100);
+fn bench_mixed_btreemap(c: &mut Criterion) {
+    assert_eq!(MAP_INSERT_RATE + MAP_LOOKUP_RATE + MAP_REMOVE_RATE, 100);
 
-    bench_mixed_sequential_reference(
-        ALREADY_INSERTED,
-        TOTAL_OPS * INSERT_RATE / 100,
-        TOTAL_OPS * LOOKUP_RATE / 100,
-        TOTAL_OPS * REMOVE_RATE / 100,
+    util::sequential::bench_mixed_btreemap(
+        MAP_ALREADY_INSERTED,
+        MAP_TOTAL_OPS * MAP_INSERT_RATE / 100,
+        MAP_TOTAL_OPS * MAP_LOOKUP_RATE / 100,
+        MAP_TOTAL_OPS * MAP_REMOVE_RATE / 100,
         c,
     );
 }
 
 fn bench_avltree(c: &mut Criterion) {
-    bench_sequential::<AVLTree<_, _>>("AVLTree", 1_000_000, c);
+    bench_sequential_map::<AVLTree<_, _>>("AVLTree", 1_000_000, c);
 }
 
 fn bench_mixed_avltree(c: &mut Criterion) {
-    bench_mixed_sequential::<AVLTree<_, _>>(
+    bench_mixed_sequential_map::<AVLTree<_, _>>(
         "AVLTree",
-        ALREADY_INSERTED,
-        TOTAL_OPS * INSERT_RATE / 100,
-        TOTAL_OPS * LOOKUP_RATE / 100,
-        TOTAL_OPS * REMOVE_RATE / 100,
+        MAP_ALREADY_INSERTED,
+        MAP_TOTAL_OPS * MAP_INSERT_RATE / 100,
+        MAP_TOTAL_OPS * MAP_LOOKUP_RATE / 100,
+        MAP_TOTAL_OPS * MAP_REMOVE_RATE / 100,
         c,
     );
 }
 
 fn bench_btree(c: &mut Criterion) {
-    bench_sequential::<BTree<_, _>>("BTree", 1_000_000, c);
+    bench_sequential_map::<BTree<_, _>>("BTree", 1_000_000, c);
 }
 
 fn bench_mixed_btree(c: &mut Criterion) {
-    bench_mixed_sequential::<BTree<_, _>>(
+    bench_mixed_sequential_map::<BTree<_, _>>(
         "BTree",
-        ALREADY_INSERTED,
-        TOTAL_OPS * INSERT_RATE / 100,
-        TOTAL_OPS * LOOKUP_RATE / 100,
-        TOTAL_OPS * REMOVE_RATE / 100,
+        MAP_ALREADY_INSERTED,
+        MAP_TOTAL_OPS * MAP_INSERT_RATE / 100,
+        MAP_TOTAL_OPS * MAP_LOOKUP_RATE / 100,
+        MAP_TOTAL_OPS * MAP_REMOVE_RATE / 100,
         c,
     );
 }
 
 criterion_group!(
     bench,
-    bench_reference_tree,
-    bench_mixed_reference_tree,
+    bench_btreemap,
+    bench_mixed_btreemap,
     bench_avltree,
     bench_mixed_avltree,
     bench_btree,

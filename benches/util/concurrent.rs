@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use cds::map::ConcurrentMap;
+use cds::{map::ConcurrentMap, stack::ConcurrentStack};
 use criterion::{black_box, measurement::WallTime, BenchmarkGroup};
 use crossbeam_epoch::pin;
 use crossbeam_utils::thread;
@@ -29,7 +29,82 @@ pub fn get_test_thread_nums() -> Vec<usize> {
     nums
 }
 
-pub fn bench_mixed_concurrent<M>(
+pub fn bench_mixed_concurrent_stack<S>(
+    name: &str,
+    push: usize,
+    pop: usize,
+    thread_num: usize,
+    c: &mut BenchmarkGroup<WallTime>,
+) where
+    S: Sync + ConcurrentStack<u64>,
+{
+    let per_ops = push + pop;
+
+    c.bench_function(
+        &format!(
+            "{} Ops (push: {}%, pop: {}%, per: {:+e}) by {} threads",
+            name,
+            push * 100 / per_ops,
+            pop * 100 / per_ops,
+            per_ops,
+            thread_num,
+        ),
+        |b| {
+            b.iter_custom(|iters| {
+                let stack = S::new();
+
+                let mut duration = Duration::ZERO;
+                for _ in 0..iters {
+                    let batched_time = thread::scope(|s| {
+                        let mut threads = Vec::new();
+
+                        for _ in 0..thread_num {
+                            let t = s.spawn(|_| {
+                                let mut rng = thread_rng();
+                                let mut duration = Duration::ZERO;
+
+                                for _ in 0..per_ops {
+                                    let op_idx = rng.gen_range(0..per_ops);
+
+                                    if op_idx < push {
+                                        let value: u64 = rng.gen();
+
+                                        let start = Instant::now();
+                                        let _ = black_box(stack.push(value, &pin()));
+                                        duration += start.elapsed();
+                                    } else {
+                                        let start = Instant::now();
+                                        let _ = black_box(stack.pop(&pin()));
+                                        duration += start.elapsed();
+                                    }
+                                }
+
+                                duration
+                            });
+
+                            threads.push(t);
+                        }
+
+                        threads
+                            .into_iter()
+                            .map(|h| h.join().unwrap())
+                            .collect::<Vec<_>>()
+                            .iter()
+                            .sum::<Duration>()
+                    })
+                    .unwrap();
+
+                    duration += batched_time
+                }
+
+                // avg thread time
+                duration / (thread_num as u32)
+            });
+        },
+    );
+}
+
+pub fn bench_mixed_concurrent_map<M>(
     name: &str,
     already_inserted: u64,
     insert: usize,
@@ -40,23 +115,21 @@ pub fn bench_mixed_concurrent<M>(
 ) where
     M: Sync + ConcurrentMap<u64, u64>,
 {
-    let total_ops = insert + lookup + remove;
+    let per_ops = insert + lookup + remove;
 
     c.bench_function(
         &format!(
-            "Inserted {:+e} {} Ops (I: {}%, L: {}%, R: {}%, total: {:+e}) by {} threads",
+            "Inserted {:+e} {} Ops (I: {}%, L: {}%, R: {}%, per: {:+e}) by {} threads",
             already_inserted,
             name,
-            insert * 100 / total_ops,
-            lookup * 100 / total_ops,
-            remove * 100 / total_ops,
-            total_ops,
+            insert * 100 / per_ops,
+            lookup * 100 / per_ops,
+            remove * 100 / per_ops,
+            per_ops,
             thread_num,
         ),
         |b| {
             b.iter_custom(|iters| {
-                let total_ops = insert + lookup + remove;
-
                 let map = M::new();
                 let mut rng = thread_rng();
 
@@ -78,8 +151,8 @@ pub fn bench_mixed_concurrent<M>(
                                 let mut rng = thread_rng();
                                 let mut duration = Duration::ZERO;
 
-                                for _ in 0..(total_ops / thread_num) {
-                                    let op_idx = rng.gen_range(0..total_ops);
+                                for _ in 0..per_ops {
+                                    let op_idx = rng.gen_range(0..per_ops);
 
                                     if op_idx < insert {
                                         let key: u64 = rng.gen_range(already_inserted..u64::MAX);

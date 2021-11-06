@@ -7,7 +7,7 @@ use cds::map::SequentialMap;
 use criterion::{black_box, Criterion};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
 
-pub fn bench_sequential_reference(already_inserted: u64, c: &mut Criterion) {
+pub fn bench_btreemap(already_inserted: u64, c: &mut Criterion) {
     c.bench_function(
         &format!(
             "Inserted {:+e} std::BTreeMap Insert (batch: 100)",
@@ -123,7 +123,7 @@ pub fn bench_sequential_reference(already_inserted: u64, c: &mut Criterion) {
     );
 }
 
-pub fn bench_mixed_sequential_reference(
+pub fn bench_mixed_btreemap(
     already_inserted: u64,
     insert: usize,
     lookup: usize,
@@ -191,7 +191,7 @@ pub fn bench_mixed_sequential_reference(
     );
 }
 
-pub fn bench_sequential<M>(name: &str, already_inserted: u64, c: &mut Criterion)
+pub fn bench_sequential_map<M>(name: &str, already_inserted: u64, c: &mut Criterion)
 where
     M: SequentialMap<u64, u64>,
 {
@@ -303,7 +303,7 @@ where
     );
 }
 
-pub fn bench_mixed_sequential<M>(
+pub fn bench_mixed_sequential_map<M>(
     name: &str,
     already_inserted: u64,
     insert: usize,
