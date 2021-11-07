@@ -15,10 +15,39 @@ use crate::lock::seqlock::SeqLock;
 use crate::lock::seqlock::WriteGuard;
 use crate::map::ConcurrentMap;
 
+
 struct NodeInner<K, V> {
     value: Atomic<V>,
     left: Atomic<Node<K, V>>,
     right: Atomic<Node<K, V>>,
+}
+
+impl<K: Debug, V: Debug> Debug for NodeInner<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        unsafe {
+            let mut result = f.debug_struct("NodeInner");
+
+            if let Some(value) = self.value.load(Ordering::Relaxed, unprotected()).as_ref() {
+                result.field("value", &Some(value));
+            } else {
+                result.field("value", &None::<V>);
+            }
+
+            if let Some(left) = self.left.load(Ordering::Acquire, unprotected()).as_ref() {
+                result.field("left", left);
+            } else {
+                result.field("left", &"null");
+            }
+
+            if let Some(right) = self.right.load(Ordering::Acquire, unprotected()).as_ref() {
+                result.field("right", right);
+            } else {
+                result.field("right", &"null");
+            }
+
+            result.finish()
+        }
+    }
 }
 
 impl<K, V> Drop for NodeInner<K, V> {
@@ -99,6 +128,16 @@ struct Node<K, V> {
     key: K,
     height: AtomicIsize,
     inner: SeqLock<NodeInner<K, V>>,
+}
+
+impl<K: Debug, V: Debug> Debug for Node<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Node")
+            .field("key", &self.key)
+            .field("height", &self.height.load(Ordering::Relaxed))
+            .field("inner", &*self.inner.write_lock())
+            .finish()
+    }
 }
 
 impl<K: Default, V: Default> Default for Node<K, V> {
@@ -371,7 +410,7 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
         let inner_guard = unsafe { root.as_ref().unwrap().inner.read_lock() };
 
         let cursor = Cursor {
-            ancestors: vec![],
+            ancestors: Vec::with_capacity(tree.get_height(guard) + 5),
             current: root,
             inner_guard: ManuallyDrop::new(inner_guard),
             dir: Dir::Right,
@@ -392,15 +431,11 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
             }
 
             unsafe {
-                if *key == self.current.as_ref().unwrap().key {
-                    self.dir = Dir::Eq;
-                    break;
-                } else if *key < self.current.as_ref().unwrap().key {
-                    self.dir = Dir::Left;
-                } else {
-                    // *key > next.key
-                    self.dir = Dir::Right;
-                }
+                self.dir = match key.cmp(&self.current.as_ref().unwrap().key) {
+                    std::cmp::Ordering::Less => Dir::Left,
+                    std::cmp::Ordering::Equal => Dir::Eq,
+                    std::cmp::Ordering::Greater =>  Dir::Right,
+                };
             }
         }
     }
@@ -435,7 +470,7 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
             let next = match self.dir {
                 Dir::Left => self.inner_guard.left.load(Ordering::Relaxed, guard),
                 Dir::Right => self.inner_guard.right.load(Ordering::Relaxed, guard),
-                Dir::Eq => panic!("The node is already arrived."),
+                Dir::Eq => return Err(()),
             };
 
             if !self.inner_guard.validate() {
@@ -509,8 +544,9 @@ impl<K, V> SeqLockAVLTree<K, V> {
     /// get the height of the tree
     pub fn get_height(&self, guard: &Guard) -> usize {
         unsafe {
-            self.root
-                .load(Ordering::Acquire, guard)
+            if let Some(node) = self
+                .root
+                .load(Ordering::Relaxed, guard)
                 .as_ref()
                 .unwrap()
                 .inner
@@ -518,37 +554,32 @@ impl<K, V> SeqLockAVLTree<K, V> {
                 .right
                 .load(Ordering::Acquire, guard)
                 .as_ref()
-                .unwrap()
-                .height
-                .load(Ordering::Relaxed) as usize
+            {
+                node.height.load(Ordering::Relaxed) as usize
+            } else {
+                0
+            }
         }
     }
+}
 
-    /// print tree structure
-    pub fn print(&self, guard: &Guard)
-    where
-        K: Debug,
-        V: Debug,
-    {
-        fn print<K: Debug, V: Debug>(node: Shared<Node<K, V>>, guard: &Guard) -> String {
-            if node.is_null() {
-                return "null".to_string();
-            }
+pub struct SeqLockAVLTree<K, V> {
+    root: Atomic<Node<K, V>>,
+}
 
-            let node = unsafe { node.as_ref().unwrap() };
-            let node_inner = node.inner.write_lock();
-
-            format!(
-                "{{key: {:?},  height: {}, value: {:?}, left: {}, right: {}}}",
-                node.key,
-                node.height.load(Ordering::SeqCst),
-                node_inner.value,
-                print(node_inner.left.load(Ordering::Relaxed, guard), guard),
-                print(node_inner.right.load(Ordering::Relaxed, guard), guard)
-            )
+impl<K: Debug, V: Debug> Debug for SeqLockAVLTree<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        unsafe {
+            f.debug_struct("SeqLockAVLTree")
+                .field(
+                    "root",
+                    self.root
+                        .load(Ordering::Acquire, unprotected())
+                        .as_ref()
+                        .unwrap(),
+                )
+                .finish()
         }
-
-        println!("{}", print(self.root.load(Ordering::Relaxed, guard), guard));
     }
 }
 
