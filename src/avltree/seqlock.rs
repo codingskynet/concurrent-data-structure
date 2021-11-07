@@ -540,33 +540,6 @@ pub struct SeqLockAVLTree<K, V> {
     root: Atomic<Node<K, V>>,
 }
 
-impl<K, V> SeqLockAVLTree<K, V> {
-    /// get the height of the tree
-    pub fn get_height(&self, guard: &Guard) -> usize {
-        unsafe {
-            if let Some(node) = self
-                .root
-                .load(Ordering::Relaxed, guard)
-                .as_ref()
-                .unwrap()
-                .inner
-                .write_lock()
-                .right
-                .load(Ordering::Acquire, guard)
-                .as_ref()
-            {
-                node.height.load(Ordering::Relaxed) as usize
-            } else {
-                0
-            }
-        }
-    }
-}
-
-pub struct SeqLockAVLTree<K, V> {
-    root: Atomic<Node<K, V>>,
-}
-
 impl<K: Debug, V: Debug> Debug for SeqLockAVLTree<K, V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         unsafe {
@@ -587,6 +560,35 @@ impl<K: Default, V: Default> Default for SeqLockAVLTree<K, V> {
     fn default() -> Self {
         Self {
             root: Atomic::new(Node::default()),
+        }
+    }
+}
+
+impl<K, V> Drop for SeqLockAVLTree<K, V> {
+    fn drop(&mut self) {
+        unsafe { drop(mem::replace(&mut self.root, Atomic::null()).into_owned()) }
+    }
+}
+
+impl<K, V> SeqLockAVLTree<K, V> {
+    /// get the height of the tree
+    pub fn get_height(&self, guard: &Guard) -> usize {
+        unsafe {
+            if let Some(node) = self
+                .root
+                .load(Ordering::Relaxed, guard)
+                .as_ref()
+                .unwrap()
+                .inner
+                .write_lock()
+                .right
+                .load(Ordering::Acquire, guard)
+                .as_ref()
+            {
+                node.height.load(Ordering::Relaxed) as usize
+            } else {
+                0
+            }
         }
     }
 }
@@ -755,11 +757,5 @@ where
 
             return unsafe { Ok(*(value.into_owned().into_box())) };
         }
-    }
-}
-
-impl<K, V> Drop for SeqLockAVLTree<K, V> {
-    fn drop(&mut self) {
-        unsafe { drop(mem::replace(&mut self.root, Atomic::null()).into_owned()) }
     }
 }
