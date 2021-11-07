@@ -430,17 +430,19 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
     /// move to parent until self.inner_guard is valid
     fn recover(&mut self) {
         while let Some((parent, parent_read_guard, dir)) = self.ancestors.pop() {
-            if parent_read_guard.validate() || self.ancestors.is_empty() {
-                // if parent is root, then we should use its guard
+            if parent_read_guard.validate() {
                 self.current = parent;
-
-                let _ = mem::replace(&mut self.inner_guard, parent_read_guard);
-
+                self.inner_guard = parent_read_guard;
                 self.dir = dir;
                 break;
             }
 
-            // parent_read_guard.forget();
+            // now parent is root
+            if self.ancestors.is_empty() {
+                self.current = parent;
+                self.inner_guard = parent_read_guard;
+                self.dir = dir;
+            }
         }
 
         self.inner_guard.restart();
