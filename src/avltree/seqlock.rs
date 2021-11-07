@@ -15,7 +15,6 @@ use crate::lock::seqlock::SeqLock;
 use crate::lock::seqlock::WriteGuard;
 use crate::map::ConcurrentMap;
 
-
 struct NodeInner<K, V> {
     value: Atomic<V>,
     left: Atomic<Node<K, V>>,
@@ -268,16 +267,14 @@ impl<K, V> Node<K, V> {
     ///
     /// If the relation among the nodes is not changed and the heights are needed to rotate, do it.
     fn try_rebalance<'g>(
-        (parent, parent_read_guard): (Shared<Node<K, V>>, ReadGuard<NodeInner<K, V>>),
-        (root, _, root_dir): &(Shared<Node<K, V>>, ReadGuard<NodeInner<K, V>>, Dir), // if rotating, root's child pointer should be rewritten
+        (parent, parent_read_guard): (Shared<Node<K, V>>, ManuallyDrop<ReadGuard<NodeInner<K, V>>>),
+        (root, _, root_dir): &(Shared<Node<K, V>>, ManuallyDrop<ReadGuard<NodeInner<K, V>>>, Dir), // if rotating, root's child pointer should be rewritten
         guard: &'g Guard,
     ) {
         if (-1..=1).contains(&parent_read_guard.get_factor(guard)) {
-            parent_read_guard.forget();
             return;
         }
 
-        parent_read_guard.forget();
         let root_guard = unsafe { root.as_ref().unwrap().inner.write_lock() };
 
         if !root_guard.is_same_child(*root_dir, parent, guard) {
@@ -386,22 +383,12 @@ enum Dir {
 }
 
 struct Cursor<'g, K, V> {
-    ancestors: Vec<(Shared<'g, Node<K, V>>, ReadGuard<'g, NodeInner<K, V>>, Dir)>,
+    ancestors: Vec<(Shared<'g, Node<K, V>>, ManuallyDrop<ReadGuard<'g, NodeInner<K, V>>>, Dir)>,
     current: Shared<'g, Node<K, V>>,
     /// the read lock for current node's inner
     /// It keeps current node's inner and is for hand-over-hand locking.
     inner_guard: ManuallyDrop<ReadGuard<'g, NodeInner<K, V>>>,
     dir: Dir,
-}
-
-impl<'g, K, V> Drop for Cursor<'g, K, V> {
-    fn drop(&mut self) {
-        unsafe { ManuallyDrop::take(&mut self.inner_guard).forget() };
-
-        while let Some((_, guard, _)) = self.ancestors.pop() {
-            guard.forget();
-        }
-    }
 }
 
 impl<'g, K: Ord, V> Cursor<'g, K, V> {
@@ -434,7 +421,7 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
                 self.dir = match key.cmp(&self.current.as_ref().unwrap().key) {
                     std::cmp::Ordering::Less => Dir::Left,
                     std::cmp::Ordering::Equal => Dir::Eq,
-                    std::cmp::Ordering::Greater =>  Dir::Right,
+                    std::cmp::Ordering::Greater => Dir::Right,
                 };
             }
         }
@@ -447,15 +434,13 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
                 // if parent is root, then we should use its guard
                 self.current = parent;
 
-                let old_guard =
-                    mem::replace(&mut self.inner_guard, ManuallyDrop::new(parent_read_guard));
-                ManuallyDrop::into_inner(old_guard).forget();
+                let _ = mem::replace(&mut self.inner_guard, parent_read_guard);
 
                 self.dir = dir;
                 break;
             }
 
-            parent_read_guard.forget();
+            // parent_read_guard.forget();
         }
 
         self.inner_guard.restart();
@@ -497,7 +482,7 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
             let parent = mem::replace(&mut self.current, next);
             let parent_guard = mem::replace(&mut self.inner_guard, ManuallyDrop::new(next_guard));
             self.ancestors
-                .push((parent, ManuallyDrop::into_inner(parent_guard), self.dir));
+                .push((parent, parent_guard, self.dir));
 
             return Ok(());
         }
@@ -526,11 +511,11 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
 
                 // the cursor.current is alive, so try rebalancing
                 if let Some(root_pair) = cursor.ancestors.last() {
-                    Node::try_rebalance((parent, parent_read_guard.clone()), root_pair, guard);
+                    Node::try_rebalance((parent, parent_read_guard), root_pair, guard);
                 }
             }
 
-            parent_read_guard.forget();
+            // parent_read_guard.forget();
             cursor.current = parent;
         }
     }
