@@ -8,7 +8,37 @@ use crate::map::SequentialMap;
 const B_MAX_NODES: usize = 11;
 const B_MID_INDEX: usize = B_MAX_NODES / 2;
 
-// TODO: optimize with MaybeUninit
+/// insert value into [T], which has one empty area on last.
+/// ex) insert C at 1 into [A, B, uninit] => [A, C, B]
+unsafe fn slice_insert<T>(ptr: &mut [T], index: usize, value: T) {
+    let size = ptr.len();
+    debug_assert!(size > index);
+
+    let ptr = ptr.as_mut_ptr();
+
+    if size > index + 1 {
+        ptr::copy(ptr.add(index), ptr.add(index + 1), size - index - 1);
+    }
+
+    ptr::write(ptr.add(index), value);
+}
+
+/// remove value from [T] and remain last area without any init
+/// ex) remove at 1 from [A, B, C] => [A, C, C(but you should not access here)]
+unsafe fn slice_remove<T>(ptr: &mut [T], index: usize) -> T {
+    let size = ptr.len();
+    debug_assert!(size > index);
+
+    let ptr = ptr.as_mut_ptr();
+    let value = ptr::read(ptr.add(index));
+
+    if size > index + 1 {
+        ptr::copy(ptr.add(index + 1), ptr.add(index), size - index - 1);
+    }
+
+    value
+}
+
 struct Node<K, V> {
     size: usize,
     depth: usize,
@@ -51,37 +81,6 @@ impl<K, V> Node<K, V> {
             values: unsafe { mem::uninitialized() },
         }
     }
-}
-
-/// insert value into [T], which has one empty area on last.
-/// ex) insert C at 1 into [A, B, uninit] => [A, C, B]
-unsafe fn slice_insert<T>(ptr: &mut [T], index: usize, value: T) {
-    let size = ptr.len();
-    debug_assert!(size > index);
-
-    let ptr = ptr.as_mut_ptr();
-
-    if size > index + 1 {
-        ptr::copy(ptr.add(index), ptr.add(index + 1), size - index - 1);
-    }
-
-    ptr::write(ptr.add(index), value);
-}
-
-/// remove value from [T] and remain last area without any init
-/// ex) remove at 1 from [A, B, C] => [A, C, C(but you should not access here)]
-unsafe fn slice_remove<T>(ptr: &mut [T], index: usize) -> T {
-    let size = ptr.len();
-    debug_assert!(size > index);
-
-    let ptr = ptr.as_mut_ptr();
-    let value = ptr::read(ptr.add(index));
-
-    if size > index + 1 {
-        ptr::copy(ptr.add(index + 1), ptr.add(index), size - index - 1);
-    }
-
-    value
 }
 
 enum InsertResult<K, V> {
@@ -218,9 +217,6 @@ impl<K: Ord, V> Node<K, V> {
 
                     self.size = B_MID_INDEX;
 
-                    // debug_assert!(self.data.len() == B_MID_INDEX);
-                    // debug_assert!(node.data.len() == B_MID_INDEX);
-
                     InsertResult::Splitted {
                         parent: mid,
                         right: node,
@@ -249,9 +245,6 @@ impl<K: Ord, V> Node<K, V> {
                         );
 
                         self.size = B_MID_INDEX;
-
-                        // debug_assert!(self.data.len() == B_MID_INDEX);
-                        // debug_assert!(node.data.len() == B_MID_INDEX);
 
                         InsertResult::Splitted {
                             parent: mid,
@@ -326,11 +319,6 @@ impl<K: Ord, V> Node<K, V> {
 
                         self.size = B_MID_INDEX;
 
-                        // debug_assert!(self.data.len() == B_MID_INDEX);
-                        // debug_assert!(self.edges.len() == B_MID_INDEX + 1);
-                        // debug_assert!(node.data.len() == B_MID_INDEX);
-                        // debug_assert!(node.edges.len() == B_MID_INDEX + 1);
-
                         InsertResult::Splitted {
                             parent: mid,
                             right: node,
@@ -361,11 +349,6 @@ impl<K: Ord, V> Node<K, V> {
                         );
 
                         self.size = B_MID_INDEX;
-
-                        // debug_assert!(self.data.len() == B_MID_INDEX);
-                        // debug_assert!(self.edges.len() == B_MID_INDEX + 1);
-                        // debug_assert!(node.data.len() == B_MID_INDEX);
-                        // debug_assert!(node.edges.len() == B_MID_INDEX + 1);
 
                         InsertResult::Splitted {
                             parent: mid,
@@ -403,11 +386,6 @@ impl<K: Ord, V> Node<K, V> {
                         slice_insert(node.mut_edges(), edge_index - B_MID_INDEX, edge);
 
                         self.size = B_MID_INDEX;
-
-                        // debug_assert!(self.data.len() == B_MID_INDEX);
-                        // debug_assert!(self.edges.len() == B_MID_INDEX + 1);
-                        // debug_assert!(node.data.len() == B_MID_INDEX);
-                        // debug_assert!(node.edges.len() == B_MID_INDEX + 1);
 
                         InsertResult::Splitted {
                             parent: mid,
@@ -475,7 +453,7 @@ struct Cursor<K, V> {
     current: NonNull<Node<K, V>>,
 }
 
-impl<K: Ord + Debug, V: Debug> Cursor<K, V> {
+impl<K: Ord, V> Cursor<K, V> {
     fn new(root: NonNull<Node<K, V>>) -> Self {
         Self {
             ancestors: Vec::with_capacity(4),
@@ -562,7 +540,7 @@ impl<K, V> Drop for BTree<K, V> {
     }
 }
 
-impl<K: Ord + Debug, V: Debug> BTree<K, V> {
+impl<K: Ord, V> BTree<K, V> {
     fn clear(&self) {
         let mut cursor = self.cursor.borrow_mut();
         cursor.ancestors.clear();
@@ -649,9 +627,6 @@ impl<K: Ord + Debug, V: Debug> BTree<K, V> {
     fn remove_recursive(&mut self, value_index: usize) -> V {
         let mut cursor = self.cursor.borrow_mut();
         let current = unsafe { cursor.current.as_mut() };
-
-        // let value = current.data.remove(value_index).1;
-        // let value = current.values[value_index];
 
         let value = if current.depth == 0 {
             let value = unsafe {
@@ -1087,10 +1062,7 @@ impl<K: Ord + Debug, V: Debug> BTree<K, V> {
     }
 }
 
-impl<K, V> SequentialMap<K, V> for BTree<K, V>
-where
-    K: Ord + Clone + Debug,
-    V: Debug,
+impl<K: Ord + Clone, V> SequentialMap<K, V> for BTree<K, V>
 {
     fn new() -> Self {
         let root = Box::leak(Box::new(Node::new())).into();
