@@ -475,37 +475,27 @@ impl<K: Ord, V> Cursor<K, V> {
     }
 
     fn descend_mut(&mut self, edge_index: usize) -> DescentSearchResult {
-        let current = unsafe { self.current.as_mut() };
+        let current = unsafe { self.current.as_ref() };
 
         if current.depth == 0 {
-            return DescentSearchResult::None { edge_index };
-        }
-
-        debug_assert!(current.size > 0);
-
-        if edge_index <= current.size {
+            DescentSearchResult::None { edge_index }
+        } else {
             let node = unsafe { *current.edges.get_unchecked(edge_index) };
             let parent = mem::replace(&mut self.current, node);
             self.ancestors.push((parent, edge_index));
 
             DescentSearchResult::NodeSearch
-        } else {
-            DescentSearchResult::None { edge_index }
         }
     }
 
     fn descend(&mut self, edge_index: usize) -> DescentSearchResult {
-        let current = unsafe { self.current.as_mut() };
+        let current = unsafe { self.current.as_ref() };
 
         if current.depth == 0 {
-            return DescentSearchResult::None { edge_index };
-        }
-
-        if edge_index <= current.size {
+            DescentSearchResult::None { edge_index }
+        } else {
             self.current = unsafe { *current.edges.get_unchecked(edge_index) };
             DescentSearchResult::NodeSearch
-        } else {
-            DescentSearchResult::None { edge_index }
         }
     }
 }
@@ -982,7 +972,7 @@ impl<K: Ord, V> BTree<K, V> {
 
         // root is now empty. Swap with unique edge
         if root.size == 0 {
-            let old_root= unsafe { ptr::read(root) };
+            let old_root = unsafe { ptr::read(root) };
             self.root = unsafe { *old_root.edges.get_unchecked(0) };
             mem::forget(old_root);
         }
@@ -1078,7 +1068,14 @@ impl<K: Ord + Clone, V> SequentialMap<K, V> for BTree<K, V> {
     fn lookup(&self, key: &K) -> Option<&V> {
         let result = match self.find(key) {
             SearchResult::Some { value_index } => unsafe {
-                let value = Some(self.cursor.borrow().current.as_ref().values.get_unchecked(value_index));
+                let value = Some(
+                    self.cursor
+                        .borrow()
+                        .current
+                        .as_ref()
+                        .values
+                        .get_unchecked(value_index),
+                );
                 value
             },
             SearchResult::None { .. } => None,
