@@ -20,3 +20,8 @@ harness = false
 [[bench]]
 name = "concurrent"
 harness = false
+
+# for debuging on bench
+# [profile.bench]
+# opt-level = 1
+# debug = true

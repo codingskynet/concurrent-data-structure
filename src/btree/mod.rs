@@ -43,7 +43,7 @@ struct Node<K, V> {
     size: usize,
     depth: usize,
     keys: [K; B_MAX_NODES],
-    edges: [Box<Node<K, V>>; B_MAX_NODES + 1],
+    edges: [NonNull<Node<K, V>>; B_MAX_NODES + 1],
     values: [V; B_MAX_NODES],
 }
 
@@ -87,7 +87,7 @@ enum InsertResult<K, V> {
     Fitted,
     Splitted {
         parent: (K, V),
-        right: Box<Node<K, V>>,
+        right: NonNull<Node<K, V>>,
     },
 }
 
@@ -108,7 +108,7 @@ impl<K, V> Node<K, V> {
         unsafe { self.values.get_unchecked_mut(..self.size) }
     }
 
-    fn edges(&self) -> &[Box<Node<K, V>>] {
+    fn edges(&self) -> &[NonNull<Node<K, V>>] {
         if self.depth > 0 {
             unsafe { self.edges.get_unchecked(..(self.size + 1)) }
         } else {
@@ -116,7 +116,7 @@ impl<K, V> Node<K, V> {
         }
     }
 
-    fn mut_edges(&mut self) -> &mut [Box<Node<K, V>>] {
+    fn mut_edges(&mut self) -> &mut [NonNull<Node<K, V>>] {
         if self.depth > 0 {
             unsafe { self.edges.get_unchecked_mut(..(self.size + 1)) }
         } else {
@@ -135,7 +135,7 @@ impl<K, V> Node<K, V> {
             }
 
             for edge in self.mut_edges() {
-                ptr::read(edge).forget();
+                ptr::read(edge.as_ptr()).forget();
             }
         }
 
@@ -189,12 +189,9 @@ impl<K: Ord, V> Node<K, V> {
 
                         self.size = B_MID_INDEX;
 
-                        // debug_assert!(self.data.len() == B_MID_INDEX);
-                        // debug_assert!(node.data.len() == B_MID_INDEX);
-
                         InsertResult::Splitted {
                             parent: mid,
-                            right: node,
+                            right: NonNull::new(Box::leak(node)).unwrap(),
                         }
                     }
                 }
@@ -219,7 +216,7 @@ impl<K: Ord, V> Node<K, V> {
 
                     InsertResult::Splitted {
                         parent: mid,
-                        right: node,
+                        right: NonNull::new(Box::leak(node)).unwrap(),
                     }
                 }
                 Ordering::Greater => {
@@ -248,7 +245,7 @@ impl<K: Ord, V> Node<K, V> {
 
                         InsertResult::Splitted {
                             parent: mid,
-                            right: node,
+                            right: NonNull::new(Box::leak(node)).unwrap(),
                         }
                     }
                 }
@@ -261,7 +258,7 @@ impl<K: Ord, V> Node<K, V> {
         edge_index: usize,
         key: K,
         value: V,
-        edge: Box<Node<K, V>>,
+        edge: NonNull<Node<K, V>>,
     ) -> InsertResult<K, V> {
         if self.size < B_MAX_NODES {
             self.size += 1;
@@ -321,7 +318,7 @@ impl<K: Ord, V> Node<K, V> {
 
                         InsertResult::Splitted {
                             parent: mid,
-                            right: node,
+                            right: NonNull::new(Box::leak(node)).unwrap(),
                         }
                     }
                 }
@@ -352,7 +349,7 @@ impl<K: Ord, V> Node<K, V> {
 
                         InsertResult::Splitted {
                             parent: mid,
-                            right: node,
+                            right: NonNull::new(Box::leak(node)).unwrap(),
                         }
                     }
                 }
@@ -389,7 +386,7 @@ impl<K: Ord, V> Node<K, V> {
 
                         InsertResult::Splitted {
                             parent: mid,
-                            right: node,
+                            right: NonNull::new(Box::leak(node)).unwrap(),
                         }
                     }
                 }
@@ -410,7 +407,7 @@ impl<K: Ord, V> Node<K, V> {
             }
 
             parents.push((target, 0));
-            target = NonNull::from(target_mut.mut_edges().first_mut().unwrap().as_mut());
+            target = unsafe { *target_mut.edges().get_unchecked(0) };
         }
     }
 
@@ -427,7 +424,7 @@ impl<K: Ord, V> Node<K, V> {
             }
 
             parents.push((target, target_mut.size));
-            target = NonNull::from(target_mut.mut_edges().last_mut().unwrap().as_mut());
+            target = unsafe { *target_mut.edges().get_unchecked(target_mut.size) };
         }
     }
 }
@@ -449,15 +446,15 @@ enum DescentSearchResult {
 
 #[derive(Debug)]
 struct Cursor<K, V> {
-    ancestors: Vec<(NonNull<Node<K, V>>, usize)>, // (parent, index from parent.edges[index])
     current: NonNull<Node<K, V>>,
+    ancestors: Vec<(NonNull<Node<K, V>>, usize)>, // (parent, index from parent.edges[index])
 }
 
 impl<K: Ord, V> Cursor<K, V> {
     fn new(root: NonNull<Node<K, V>>) -> Self {
         Self {
-            ancestors: Vec::with_capacity(4),
             current: root,
+            ancestors: Vec::with_capacity(4),
         }
     }
 
@@ -487,8 +484,8 @@ impl<K: Ord, V> Cursor<K, V> {
         debug_assert!(current.size > 0);
 
         if edge_index <= current.size {
-            let node = current.edges[edge_index].as_mut();
-            let parent = mem::replace(&mut self.current, NonNull::new(node).unwrap());
+            let node = unsafe { *current.edges.get_unchecked(edge_index) };
+            let parent = mem::replace(&mut self.current, node);
             self.ancestors.push((parent, edge_index));
 
             DescentSearchResult::NodeSearch
@@ -504,11 +501,8 @@ impl<K: Ord, V> Cursor<K, V> {
             return DescentSearchResult::None { edge_index };
         }
 
-        debug_assert!(current.size > 0);
-
         if edge_index <= current.size {
-            let node = current.edges[edge_index].as_mut();
-            self.current = NonNull::new(node).unwrap();
+            self.current = unsafe { *current.edges.get_unchecked(edge_index) };
             DescentSearchResult::NodeSearch
         } else {
             DescentSearchResult::None { edge_index }
@@ -566,7 +560,7 @@ impl<K: Ord, V> BTree<K, V> {
     }
 
     fn find(&self, key: &K) -> SearchResult {
-        let mut cursor = self.cursor.borrow_mut();
+        let mut cursor = self.cursor.try_borrow_mut().unwrap();
 
         loop {
             match cursor.search_in_node(key) {
@@ -617,7 +611,7 @@ impl<K: Ord, V> BTree<K, V> {
         unsafe {
             ptr::write(root.keys.as_mut_ptr(), key);
             ptr::write(root.values.as_mut_ptr(), value);
-            ptr::write(root.edges.as_mut_ptr(), Box::from_raw(current as *mut _));
+            ptr::write(root.edges.as_mut_ptr(), NonNull::new(current).unwrap());
             ptr::write(root.edges.as_mut_ptr().add(1), edge);
         }
 
@@ -647,9 +641,7 @@ impl<K: Ord, V> BTree<K, V> {
 
             // try replace with predecessor or successor
             // if the leaf node has at least two pairs of (key, value), just return after replacing since it does not need to rebalance
-            let predecessor_edge = unsafe {
-                &mut **(current.edges.get_unchecked_mut(value_index) as *mut Box<Node<K, V>>)
-            };
+            let predecessor_edge = unsafe { current.edges.get_unchecked_mut(value_index).as_mut() };
             let (_, predecessor) = predecessor_edge.find_end();
 
             if predecessor.size > 1 {
@@ -667,10 +659,8 @@ impl<K: Ord, V> BTree<K, V> {
                     return value;
                 };
             } else {
-                let successor_edge = unsafe {
-                    &mut **(current.edges.get_unchecked_mut(value_index + 1)
-                        as *mut Box<Node<K, V>>)
-                };
+                let successor_edge =
+                    unsafe { current.edges.get_unchecked_mut(value_index + 1).as_mut() };
                 let (parents, successor) = successor_edge.find_begin();
 
                 let value = unsafe {
@@ -703,9 +693,8 @@ impl<K: Ord, V> BTree<K, V> {
 
             // the only one that uses right-hand rule since this is the rightmost node
             if edge_index == 0 {
-                let right_sibling = unsafe {
-                    &mut **(parent.edges.get_unchecked_mut(edge_index + 1) as *mut Box<Node<K, V>>)
-                };
+                let right_sibling =
+                    unsafe { parent.edges.get_unchecked_mut(edge_index + 1).as_mut() };
 
                 // parent has one (key, value), therefore it is to be empty node.
                 if parent.size == 1 {
@@ -714,6 +703,7 @@ impl<K: Ord, V> BTree<K, V> {
                     if right_sibling.size == 1 {
                         // println!("CASE 1");
                         let current = unsafe { slice_remove(parent.mut_edges(), 0) };
+                        let current = unsafe { ptr::read(current.as_ptr()) };
 
                         right_sibling.size += 1;
                         unsafe {
@@ -742,17 +732,16 @@ impl<K: Ord, V> BTree<K, V> {
                         mem::forget(current);
                     } else {
                         // println!("CASE 2");
-                        let (new_parent_key, new_parent_value) = unsafe {
-                            (
+                        unsafe {
+                            let (new_parent_key, new_parent_value) = (
                                 slice_remove(right_sibling.mut_keys(), 0),
                                 slice_remove(right_sibling.mut_values(), 0),
-                            )
-                        };
+                            );
 
-                        let current = parent.edges[edge_index].as_mut();
+                            let current = parent.edges.get_unchecked_mut(edge_index).as_mut();
 
-                        current.size += 1;
-                        unsafe {
+                            current.size += 1;
+
                             ptr::write(
                                 current.keys.as_mut_ptr().add(0),
                                 mem::replace(&mut parent.keys[0], new_parent_key),
@@ -769,16 +758,16 @@ impl<K: Ord, V> BTree<K, V> {
                                     slice_remove(right_sibling.mut_edges(), 0),
                                 );
                             }
+                            right_sibling.size -= 1;
                         }
-                        right_sibling.size -= 1;
 
                         break;
                     }
                 } else {
                     if right_sibling.size == 1 {
                         // println!("CASE 3");
-                        right_sibling.size += 1;
                         unsafe {
+                            right_sibling.size += 1;
                             slice_insert(
                                 right_sibling.mut_keys(),
                                 0,
@@ -789,31 +778,27 @@ impl<K: Ord, V> BTree<K, V> {
                                 0,
                                 slice_remove(parent.mut_values(), edge_index),
                             );
-                        }
 
-                        let current = unsafe { slice_remove(parent.mut_edges(), edge_index) };
-                        parent.size -= 1;
+                            let current = slice_remove(parent.mut_edges(), edge_index);
+                            let current = ptr::read(current.as_ptr());
+                            parent.size -= 1;
 
-                        if current.depth > 0 {
-                            unsafe {
+                            if current.depth > 0 {
                                 slice_insert(
                                     right_sibling.mut_edges(),
                                     0,
                                     ptr::read(current.edges.as_ptr().add(0)),
                                 );
                             }
-                        }
 
-                        mem::forget(current);
+                            mem::forget(current);
+                        }
                         break;
                     } else {
                         // println!("CASE 4");
-                        let current = unsafe {
-                            &mut **(parent.edges.get_unchecked_mut(edge_index)
-                                as *mut Box<Node<K, V>>)
-                        };
-                        current.size += 1;
                         unsafe {
+                            let current = parent.edges.get_unchecked_mut(edge_index).as_mut();
+                            current.size += 1;
                             ptr::write(
                                 current.keys.as_mut_ptr().add(0),
                                 slice_remove(parent.mut_keys(), edge_index),
@@ -822,10 +807,9 @@ impl<K: Ord, V> BTree<K, V> {
                                 current.values.as_mut_ptr().add(0),
                                 slice_remove(parent.mut_values(), edge_index),
                             );
-                        };
-                        debug_assert!(current.size == 1);
 
-                        unsafe {
+                            debug_assert!(current.size == 1);
+
                             slice_insert(
                                 parent.mut_keys(),
                                 edge_index,
@@ -846,25 +830,26 @@ impl<K: Ord, V> BTree<K, V> {
                                     slice_remove(right_sibling.mut_edges(), 0),
                                 );
                             }
+                            right_sibling.size -= 1;
                         }
-                        right_sibling.size -= 1;
 
                         break;
                     }
                 }
             } else {
-                let left_sibling = unsafe {
-                    &mut **(parent.edges.get_unchecked_mut(edge_index - 1) as *mut Box<Node<K, V>>)
-                };
+                let left_sibling =
+                    unsafe { parent.edges.get_unchecked_mut(edge_index - 1).as_mut() };
 
                 if parent.size == 1 {
                     if left_sibling.size == 1 {
                         // println!("CASE 5");
-                        let current = unsafe { ptr::read(parent.edges.as_ptr().add(edge_index)) };
-
-                        // TODO: should use slice_insert?
-                        left_sibling.size += 1;
                         unsafe {
+                            let current = parent.edges.get_unchecked(edge_index);
+                            let current = ptr::read(current.as_ptr());
+
+                            // TODO: should use slice_insert?
+                            left_sibling.size += 1;
+
                             ptr::write(
                                 left_sibling.keys.as_mut_ptr().add(left_sibling.size - 1),
                                 ptr::read(parent.keys.as_ptr().add(parent.size - 1)),
@@ -880,17 +865,17 @@ impl<K: Ord, V> BTree<K, V> {
                                     ptr::read(current.edges.as_ptr().add(0)),
                                 );
                             }
-                        };
-                        parent.size -= 1;
-                        debug_assert!(parent.size == 0);
+                            parent.size -= 1;
+                            debug_assert!(parent.size == 0);
 
-                        mem::forget(current);
+                            mem::forget(current);
+                        };
                     } else {
                         // println!("CASE 6");
-                        let current = parent.edges[edge_index].as_mut();
-
-                        current.size += 1;
                         unsafe {
+                            let current = parent.edges.get_unchecked_mut(edge_index).as_mut();
+
+                            current.size += 1;
                             ptr::write(
                                 current.keys.as_mut_ptr().add(0),
                                 mem::replace(
@@ -917,16 +902,17 @@ impl<K: Ord, V> BTree<K, V> {
                                     ptr::read(left_sibling.edges.as_ptr().add(left_sibling.size)),
                                 );
                             }
+
+                            left_sibling.size -= 1;
                         }
-                        left_sibling.size -= 1;
 
                         break;
                     }
                 } else {
                     if left_sibling.size == 1 {
                         // println!("CASE 7");
-                        left_sibling.size += 1;
                         unsafe {
+                            left_sibling.size += 1;
                             ptr::write(
                                 left_sibling.keys.as_mut_ptr().add(left_sibling.size - 1),
                                 slice_remove(parent.mut_keys(), edge_index - 1),
@@ -937,6 +923,7 @@ impl<K: Ord, V> BTree<K, V> {
                             );
 
                             let current = slice_remove(parent.mut_edges(), edge_index);
+                            let current = ptr::read(current.as_ptr());
 
                             if current.depth > 0 {
                                 ptr::write(
@@ -946,16 +933,16 @@ impl<K: Ord, V> BTree<K, V> {
                             }
 
                             mem::forget(current);
+
+                            parent.size -= 1;
                         }
-                        parent.size -= 1;
 
                         break;
                     } else {
                         // println!("CASE 8");
-                        let current = parent.edges[edge_index].as_mut();
-
-                        current.size += 1;
                         unsafe {
+                            let current = parent.edges.get_unchecked_mut(edge_index).as_mut();
+                            current.size += 1;
                             ptr::write(
                                 current.keys.as_mut_ptr().add(0),
                                 mem::replace(
@@ -982,8 +969,8 @@ impl<K: Ord, V> BTree<K, V> {
                                     ptr::read(left_sibling.edges.as_ptr().add(left_sibling.size)),
                                 );
                             }
+                            left_sibling.size -= 1;
                         }
-                        left_sibling.size -= 1;
 
                         break;
                     }
@@ -995,8 +982,8 @@ impl<K: Ord, V> BTree<K, V> {
 
         // root is now empty. Swap with unique edge
         if root.size == 0 {
-            let old_root: Box<Node<K, V>> = unsafe { Box::from_raw(root as *mut _) };
-            self.root = unsafe { Box::leak(ptr::read(old_root.edges.as_ptr().add(0))).into() };
+            let old_root= unsafe { ptr::read(root) };
+            self.root = unsafe { *old_root.edges.get_unchecked(0) };
             mem::forget(old_root);
         }
 
@@ -1007,12 +994,13 @@ impl<K: Ord, V> BTree<K, V> {
         let root = unsafe { self.root.as_ref() };
 
         fn count_nodes<K: Ord, V>(
-            node: &Node<K, V>,
+            node: NonNull<Node<K, V>>,
             depth: usize,
             root_depth: usize,
             from: Option<&K>,
             to: Option<&K>,
         ) -> usize {
+            let node = unsafe { node.as_ref() };
             if node.depth != root_depth {
                 assert!(node.size > 0 && node.size <= B_MAX_NODES);
             }
@@ -1050,20 +1038,19 @@ impl<K: Ord, V> BTree<K, V> {
                         } else {
                             None
                         };
-                        count_nodes(n, depth - 1, root_depth, from, to)
+                        count_nodes(*n, depth - 1, root_depth, from, to)
                     })
                     .sum::<usize>()
         }
 
         assert_eq!(
-            count_nodes(root, root.depth, root.depth, None, None),
+            count_nodes(self.root, root.depth, root.depth, None, None),
             self.size
         );
     }
 }
 
-impl<K: Ord + Clone, V> SequentialMap<K, V> for BTree<K, V>
-{
+impl<K: Ord + Clone, V> SequentialMap<K, V> for BTree<K, V> {
     fn new() -> Self {
         let root = Box::leak(Box::new(Node::new())).into();
 
@@ -1091,7 +1078,7 @@ impl<K: Ord + Clone, V> SequentialMap<K, V> for BTree<K, V>
     fn lookup(&self, key: &K) -> Option<&V> {
         let result = match self.find(key) {
             SearchResult::Some { value_index } => unsafe {
-                let value = Some(&self.cursor.borrow().current.as_ref().values[value_index]);
+                let value = Some(self.cursor.borrow().current.as_ref().values.get_unchecked(value_index));
                 value
             },
             SearchResult::None { .. } => None,
