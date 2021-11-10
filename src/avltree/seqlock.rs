@@ -455,13 +455,21 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
                 Dir::Eq => return Err(()),
             };
 
-            let next_guard = unsafe { some_or!(next.as_ref(), return Err(())).inner.read_lock() };
+            let next_guard = unsafe {
+                if let Some(next) = next.as_ref() {
+                    Some(next.inner.read_lock())
+                } else {
+                    None
+                }
+            };
 
             if !self.inner_guard.validate() {
                 // Optimistic read lock is failed. Retry
                 self.recover();
                 continue;
             }
+
+            let next_guard = some_or!(next_guard, return Err(()));
 
             // replace with current's read guard, then store parent_guard in cursor
             let parent = mem::replace(&mut self.current, next);
@@ -503,30 +511,6 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
         }
     }
 }
-
-impl<K, V> SeqLockAVLTree<K, V> {
-    /// get the height of the tree
-    pub fn get_height(&self, guard: &Guard) -> usize {
-        unsafe {
-            if let Some(node) = self
-                .root
-                .load(Ordering::Relaxed, guard)
-                .as_ref()
-                .unwrap()
-                .inner
-                .write_lock()
-                .right
-                .load(Ordering::Acquire, guard)
-                .as_ref()
-            {
-                node.height.load(Ordering::Relaxed) as usize
-            } else {
-                0
-            }
-        }
-    }
-}
-
 pub struct SeqLockAVLTree<K, V> {
     root: Atomic<Node<K, V>>,
 }
@@ -561,6 +545,29 @@ impl<K, V> Drop for SeqLockAVLTree<K, V> {
     }
 }
 
+impl<K, V> SeqLockAVLTree<K, V> {
+    /// get the height of the tree
+    pub fn get_height(&self, guard: &Guard) -> usize {
+        unsafe {
+            if let Some(node) = self
+                .root
+                .load(Ordering::Relaxed, guard)
+                .as_ref()
+                .unwrap()
+                .inner
+                .write_lock()
+                .right
+                .load(Ordering::Acquire, guard)
+                .as_ref()
+            {
+                node.height.load(Ordering::Relaxed) as usize
+            } else {
+                0
+            }
+        }
+    }
+}
+
 impl<K, V> ConcurrentMap<K, V> for SeqLockAVLTree<K, V>
 where
     K: Ord + Clone + Default,
@@ -584,6 +591,16 @@ where
             cursor.find(key, guard);
 
             let write_guard = ok_or!(cursor.inner_guard.clone().upgrade(), continue);
+
+            // check if the current is alive now by checking parent node. If disconnected, retry
+            // ex) This node is emptied and a edge node. Then, the upgrade to write_guard can success,
+            // but on `try_cleanup` this node can be disconnected from the parent.
+            if let Some((_, read_guard, dir)) = cursor.ancestors.last() {
+                if !(read_guard.is_same_child(*dir, cursor.current, guard) && read_guard.validate())
+                {
+                    continue;
+                }
+            }
 
             match cursor.dir {
                 Dir::Left => {
@@ -622,6 +639,7 @@ where
         let backoff = Backoff::new();
         loop {
             backoff.snooze();
+
             cursor.recover();
             cursor.find(key, guard);
 
@@ -644,6 +662,7 @@ where
         let backoff = Backoff::new();
         loop {
             backoff.snooze();
+
             cursor.recover();
             cursor.find(key, guard);
 
@@ -674,6 +693,7 @@ where
         let backoff = Backoff::new();
         loop {
             backoff.snooze();
+
             cursor.recover();
             cursor.find(key, guard);
 
@@ -692,6 +712,7 @@ where
             }
 
             drop(write_guard);
+
             Cursor::repair(cursor, guard);
 
             return unsafe { Ok(*(value.into_owned().into_box())) };
