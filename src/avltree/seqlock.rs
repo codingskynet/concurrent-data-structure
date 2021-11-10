@@ -547,6 +547,7 @@ impl<K, V> Drop for SeqLockAVLTree<K, V> {
 
 impl<K, V> SeqLockAVLTree<K, V> {
     /// get the height of the tree
+    /// Since using read lock without validation for lightweight, it cannot ensure the value.
     pub fn get_height(&self, guard: &Guard) -> usize {
         unsafe {
             if let Some(node) = self
@@ -555,7 +556,7 @@ impl<K, V> SeqLockAVLTree<K, V> {
                 .as_ref()
                 .unwrap()
                 .inner
-                .write_lock()
+                .read_lock()
                 .right
                 .load(Ordering::Acquire, guard)
                 .as_ref()
