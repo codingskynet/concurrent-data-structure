@@ -14,6 +14,8 @@ use crate::lock::seqlock::ReadGuard;
 use crate::lock::seqlock::SeqLock;
 use crate::lock::seqlock::WriteGuard;
 use crate::map::ConcurrentMap;
+use crate::ok_or;
+use crate::some_or;
 
 struct Node<K, V> {
     key: K,
@@ -116,11 +118,7 @@ impl<K, V> Node<K, V> {
 
                 // check if current's parent is even parent now
                 if parent_write_guard.is_same_child(dir, current, guard) {
-                    let write_guard = if let Ok(write_guard) = read_guard.upgrade() {
-                        write_guard
-                    } else {
-                        return false;
-                    };
+                    let write_guard = ok_or!(read_guard.upgrade(), return false);
 
                     let replace_node = if !left {
                         write_guard
@@ -187,7 +185,6 @@ impl<K, V> Node<K, V> {
             if current_guard.get_factor(guard) > 0 {
                 // partial RL rotation
                 let left_child = current_guard.left.load(Ordering::Relaxed, guard);
-
                 let left_child_guard = unsafe { left_child.as_ref().unwrap().inner.write_lock() };
 
                 parent_guard.right.store(
@@ -221,7 +218,6 @@ impl<K, V> Node<K, V> {
             if current_guard.get_factor(guard) < 0 {
                 // partial LR rotation
                 let right_child = current_guard.right.load(Ordering::Relaxed, guard);
-
                 let right_child_guard = unsafe { right_child.as_ref().unwrap().inner.write_lock() };
 
                 parent_guard.left.store(
@@ -339,14 +335,14 @@ impl<K, V> NodeInner<K, V> {
         let left = self.left.load(Ordering::Acquire, guard);
         let right = self.right.load(Ordering::Acquire, guard);
 
-        let left_height = if !left.is_null() {
-            unsafe { left.as_ref().unwrap().height.load(Ordering::Relaxed) }
+        let left_height = if let Some(left) = unsafe { left.as_ref() } {
+            left.height.load(Ordering::Relaxed)
         } else {
             0
         };
 
-        let right_height = if !right.is_null() {
-            unsafe { right.as_ref().unwrap().height.load(Ordering::Relaxed) }
+        let right_height = if let Some(right) = unsafe { right.as_ref() } {
+            right.height.load(Ordering::Relaxed)
         } else {
             0
         };
@@ -358,19 +354,19 @@ impl<K, V> NodeInner<K, V> {
         let left = self.left.load(Ordering::Acquire, guard);
         let right = self.right.load(Ordering::Acquire, guard);
 
-        let left = if !left.is_null() {
-            unsafe { left.as_ref().unwrap().height.load(Ordering::Relaxed) }
+        let left_height = if let Some(left) = unsafe { left.as_ref() } {
+            left.height.load(Ordering::Relaxed)
         } else {
             0
         };
 
-        let right = if !right.is_null() {
-            unsafe { right.as_ref().unwrap().height.load(Ordering::Relaxed) }
+        let right_height = if let Some(right) = unsafe { right.as_ref() } {
+            right.height.load(Ordering::Relaxed)
         } else {
             0
         };
 
-        max(left, right) + 1
+        max(left_height, right_height) + 1
     }
 }
 
@@ -459,25 +455,13 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
                 Dir::Eq => return Err(()),
             };
 
+            let next_guard = unsafe { some_or!(next.as_ref(), return Err(())).inner.read_lock() };
+
             if !self.inner_guard.validate() {
                 // Optimistic read lock is failed. Retry
                 self.recover();
                 continue;
             }
-
-            // since rebalance, should check restrictly on current's parent
-            if let Some((_, parent_read_guard, _)) = self.ancestors.last() {
-                if !parent_read_guard.validate() {
-                    self.recover();
-                    continue;
-                }
-            }
-
-            if next.is_null() {
-                return Err(());
-            }
-
-            let next_guard = unsafe { next.as_ref().unwrap().inner.read_lock() };
 
             // replace with current's read guard, then store parent_guard in cursor
             let parent = mem::replace(&mut self.current, next);
@@ -599,40 +583,14 @@ where
             cursor.recover();
             cursor.find(key, guard);
 
-            let write_guard = if let Ok(guard) = cursor.inner_guard.clone().upgrade() {
-                guard
-            } else {
-                continue;
-            };
-
-            if cursor.dir == Dir::Eq && !write_guard.value.load(Ordering::Relaxed, guard).is_null()
-            {
-                return Err(value);
-            }
-
-            // check if the current is alive now by checking parent node. If disconnected, retry
-            if let Some((_, read_guard, dir)) = cursor.ancestors.last() {
-                if !read_guard.is_same_child(*dir, cursor.current, guard) || !read_guard.validate()
-                {
-                    // Before inserting, the current is already disconnected.
-                    continue;
-                }
-            }
+            let write_guard = ok_or!(cursor.inner_guard.clone().upgrade(), continue);
 
             match cursor.dir {
                 Dir::Left => {
-                    if !write_guard.left.load(Ordering::Relaxed, guard).is_null() {
-                        continue; // some thread already writed. Retry
-                    }
-
                     let node = Node::new(key.clone(), value);
                     write_guard.left.store(Owned::new(node), Ordering::Relaxed);
                 }
                 Dir::Right => {
-                    if !write_guard.right.load(Ordering::Relaxed, guard).is_null() {
-                        continue; // some thread already writed. Retry
-                    }
-
                     let node = Node::new(key.clone(), value);
                     write_guard.right.store(Owned::new(node), Ordering::Relaxed);
                 }
@@ -643,7 +601,7 @@ where
 
                     write_guard
                         .value
-                        .swap(Owned::new(value), Ordering::Release, guard);
+                        .swap(Owned::new(value), Ordering::Relaxed, guard);
                 }
             }
 
@@ -668,11 +626,7 @@ where
             cursor.find(key, guard);
 
             if cursor.dir == Dir::Eq {
-                let write_guard = if let Ok(write_guard) = cursor.inner_guard.clone().upgrade() {
-                    write_guard
-                } else {
-                    continue;
-                };
+                let write_guard = ok_or!(cursor.inner_guard.clone().upgrade(), continue);
 
                 return unsafe { f(write_guard.value.load(Ordering::Acquire, guard).as_ref()) };
             } else {
@@ -727,11 +681,7 @@ where
                 return Err(());
             }
 
-            let write_guard = if let Ok(guard) = cursor.inner_guard.clone().upgrade() {
-                guard
-            } else {
-                continue;
-            };
+            let write_guard = ok_or!(cursor.inner_guard.clone().upgrade(), continue);
 
             let value = write_guard
                 .value
