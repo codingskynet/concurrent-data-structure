@@ -424,23 +424,21 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
 
     /// move to parent until self.inner_guard is valid
     fn recover(&mut self) {
-        while let Some((parent, parent_read_guard, dir)) = self.ancestors.pop() {
-            if parent_read_guard.validate() {
-                self.current = parent;
-                self.inner_guard = parent_read_guard;
-                self.dir = dir;
-                break;
-            }
+        while let Some((node, read_guard, dir)) = self.ancestors.pop() {
+            self.current = node;
+            self.inner_guard = read_guard;
+            self.dir = dir;
 
-            // now parent is root
-            if self.ancestors.is_empty() {
-                self.current = parent;
-                self.inner_guard = parent_read_guard;
-                self.dir = dir;
+            if let Some((_, parent_read_guard, _)) = self.ancestors.last() {
+                if self.inner_guard.validate() && parent_read_guard.validate() {
+                    break;
+                }
             }
         }
 
-        self.inner_guard.restart();
+        if self.ancestors.is_empty() {
+            self.inner_guard.restart();
+        }
     }
 
     /// move the cursor to the direction using hand-over-hand locking
