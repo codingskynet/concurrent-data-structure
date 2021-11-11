@@ -645,7 +645,7 @@ where
             if cursor.dir == Dir::Eq {
                 let write_guard = ok_or!(cursor.inner_guard.clone().upgrade(), continue);
 
-                return unsafe { f(write_guard.value.load(Ordering::Acquire, guard).as_ref()) };
+                return unsafe { f(write_guard.value.load(Ordering::Relaxed, guard).as_ref()) };
             } else {
                 return f(None);
             }
@@ -670,7 +670,7 @@ where
                     cursor
                         .inner_guard
                         .value
-                        .load(Ordering::Acquire, guard)
+                        .load(Ordering::Relaxed, guard)
                         .as_ref()
                         .cloned()
                 };
@@ -704,7 +704,7 @@ where
 
             let value = write_guard
                 .value
-                .swap(Shared::null(), Ordering::Acquire, guard);
+                .swap(Shared::null(), Ordering::Relaxed, guard);
 
             if value.is_null() {
                 return Err(());
