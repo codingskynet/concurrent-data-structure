@@ -3,7 +3,6 @@ use crossbeam_epoch::Atomic;
 use crossbeam_epoch::Guard;
 use crossbeam_epoch::Owned;
 use crossbeam_epoch::Shared;
-use crossbeam_utils::Backoff;
 use std::cmp::max;
 use std::fmt::Debug;
 use std::mem;
@@ -581,10 +580,7 @@ where
     fn insert(&self, key: &K, value: V, guard: &Guard) -> Result<(), V> {
         let mut cursor = Cursor::new(self, guard);
 
-        let backoff = Backoff::new();
         loop {
-            backoff.snooze();
-
             // if the cursor is invalid, then move up until cursor.inner_guard is valid
             cursor.recover();
             cursor.find(key, guard);
@@ -635,10 +631,7 @@ where
     {
         let mut cursor = Cursor::new(self, guard);
 
-        let backoff = Backoff::new();
         loop {
-            backoff.snooze();
-
             cursor.recover();
             cursor.find(key, guard);
 
@@ -658,10 +651,7 @@ where
     {
         let mut cursor = Cursor::new(self, guard);
 
-        let backoff = Backoff::new();
         loop {
-            backoff.snooze();
-
             cursor.recover();
             cursor.find(key, guard);
 
@@ -689,10 +679,7 @@ where
     fn remove(&self, key: &K, guard: &Guard) -> Result<V, ()> {
         let mut cursor = Cursor::new(self, guard);
 
-        let backoff = Backoff::new();
         loop {
-            backoff.snooze();
-
             cursor.recover();
             cursor.find(key, guard);
 
