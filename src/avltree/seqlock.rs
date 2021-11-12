@@ -674,7 +674,13 @@ where
             cursor.recover();
             cursor.find(key, guard);
 
-            if cursor.dir != Dir::Eq {
+            let value_is_null = cursor
+                .inner_guard
+                .value
+                .load(Ordering::Relaxed, guard)
+                .is_null();
+
+            if cursor.dir != Dir::Eq || (value_is_null && cursor.inner_guard.validate()) {
                 return Err(());
             }
 
@@ -683,10 +689,6 @@ where
             let value = write_guard
                 .value
                 .swap(Shared::null(), Ordering::Relaxed, guard);
-
-            if value.is_null() {
-                return Err(());
-            }
 
             drop(write_guard);
 
