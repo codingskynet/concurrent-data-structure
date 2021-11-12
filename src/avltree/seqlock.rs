@@ -452,13 +452,7 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
                 Dir::Eq => return Err(()),
             };
 
-            let next_guard = unsafe {
-                if let Some(next) = next.as_ref() {
-                    Some(next.inner.read_lock())
-                } else {
-                    None
-                }
-            };
+            let next_guard = unsafe { next.as_ref().and_then(|n| Some(n.inner.read_lock())) };
 
             if !self.inner_guard.validate() {
                 // Optimistic read lock is failed. Retry
@@ -587,16 +581,6 @@ where
 
             let write_guard = ok_or!(cursor.inner_guard.clone().upgrade(), continue);
 
-            // check if the current is alive now by checking parent node. If disconnected, retry
-            // ex) This node is emptied and a edge node. Then, the upgrade to write_guard can success,
-            // but on `try_cleanup` this node can be disconnected from the parent.
-            if let Some((_, read_guard, dir)) = cursor.ancestors.last() {
-                if !(read_guard.is_same_child(*dir, cursor.current, guard) && read_guard.validate())
-                {
-                    continue;
-                }
-            }
-
             match cursor.dir {
                 Dir::Left => {
                     let node = Node::new(key.clone(), value);
@@ -607,6 +591,13 @@ where
                     write_guard.right.store(Owned::new(node), Ordering::Relaxed);
                 }
                 Dir::Eq => {
+                    // check if the current is alive now by checking parent node. If disconnected, retry
+                    // ex) This node is emptied and a edge node. Then, the upgrade to write_guard can success,
+                    // but on `try_cleanup` this node can be disconnected from the parent.
+                    if !cursor.ancestors.last().unwrap().1.validate() {
+                        continue;
+                    }
+
                     if !write_guard.value.load(Ordering::Relaxed, guard).is_null() {
                         return Err(value);
                     }
