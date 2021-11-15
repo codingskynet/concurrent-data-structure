@@ -78,7 +78,7 @@ fn bench_mixed_per_seqlockavltree(c: &mut Criterion) {
         for num in get_test_thread_nums() {
             group.throughput(Throughput::Elements((MAP_PER_OPS * num) as u64));
             bench_mixed_concurrent_map::<SeqLockAVLTree<_, _>>(
-                "SeqlockAVLTree",
+                "SeqLockAVLTree",
                 MAP_ALREADY_INSERTED,
                 MAP_PER_OPS * insert / 100,
                 MAP_PER_OPS * lookup / 100,
@@ -103,7 +103,7 @@ fn bench_mixed_total_seqlockavltree(c: &mut Criterion) {
             group.throughput(Throughput::Elements(MAP_TOTAL_OPS as u64));
             let per_op = MAP_TOTAL_OPS / num;
             bench_mixed_concurrent_map::<SeqLockAVLTree<_, _>>(
-                "SeqlockAVLTree",
+                "SeqLockAVLTree",
                 MAP_ALREADY_INSERTED,
                 per_op * insert / 100,
                 per_op * lookup / 100,

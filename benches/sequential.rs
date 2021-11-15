@@ -34,7 +34,7 @@ fn bench_vs_btreemap(c: &mut Criterion) {
         );
 
         let mut group = c.benchmark_group(format!(
-            "std::BTreeMap vs BTree: Inserted {:+e}, Ops (I: {}%, L: {}%, R: {}%, total: {:+e})",
+            "Inserted {:+e}, Ops (I: {}%, L: {}%, R: {}%, total: {:+e})",
             MAP_ALREADY_INSERTED, insert, lookup, remove, MAP_TOTAL_OPS
         ));
         group.measurement_time(Duration::from_secs(15)); // Note: make almost same the measurement_time to iters * avg_op_time
