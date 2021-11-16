@@ -1,7 +1,4 @@
-use std::{
-    marker::PhantomData,
-    mem,
-};
+use std::{iter::Peekable, marker::PhantomData, mem, ptr::NonNull};
 
 use either::Either;
 
@@ -84,8 +81,17 @@ struct Node256<V> {
 
 impl<V> NodeOps<V> for Node256<V> {}
 
+trait Encodable {
+    fn encode(self) -> Vec<u8>;
+}
+
+struct Cursor<V> {
+    parent: Option<NonNull<Node<V>>>,
+    current: NonNull<Node<V>>,
+}
+
 pub struct ART<K, V> {
-    root: Box<Node<V>>,
+    root: NonNull<Node<V>>,
     _marker: PhantomData<K>,
 }
 
