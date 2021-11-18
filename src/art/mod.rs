@@ -5,6 +5,7 @@ use std::{
     ptr::{self, NonNull},
 };
 
+use arr_macro::arr;
 use either::Either;
 
 use crate::{map::SequentialMap, util::slice_insert};
@@ -110,10 +111,72 @@ impl<V> Node<V> {
     }
 
     /// extend node to bigger one only if necessary
-    fn extend(&mut self) {}
+    fn extend(&mut self) {
+        if self.deref().is_right() {
+            panic!("NodeV cannot be extended.")
+        }
+
+        if !self.deref().left().unwrap().is_full() {
+            return;
+        }
+
+        let node_type = self.node_type();
+        let node = self.deref_mut().left().unwrap();
+
+        match node_type {
+            NodeType::Value => unreachable!(),
+            NodeType::Node4 => unsafe {
+                let node = node as *const dyn NodeOps<V> as *const Node4<V>;
+                let new = Box::new(Node16::from(ptr::read(node)));
+                self.pointer = Box::into_raw(new) as usize | node_type as usize;
+            },
+            NodeType::Node16 => unsafe {
+                let node = node as *const dyn NodeOps<V> as *const Node16<V>;
+                let new = Box::new(Node48::from(ptr::read(node)));
+                self.pointer = Box::into_raw(new) as usize | node_type as usize;
+            },
+            NodeType::Node48 => unsafe {
+                let node = node as *const dyn NodeOps<V> as *const Node48<V>;
+                let new = Box::new(Node256::from(ptr::read(node)));
+                self.pointer = Box::into_raw(new) as usize | node_type as usize;
+            },
+            NodeType::Node256 => panic!("Node256 cannot be extended."),
+        }
+    }
 
     /// shrink node to smaller one only if necessary
-    fn shrink(&mut self) {}
+    fn shrink(&mut self) {
+        if self.deref().is_right() {
+            panic!("NodeV cannot be shrinked.")
+        }
+
+        if !self.deref().left().unwrap().is_shrinkable() {
+            return;
+        }
+
+        let node_type = self.node_type();
+        let node = self.deref_mut().left().unwrap();
+
+        match node_type {
+            NodeType::Value => unreachable!(),
+            NodeType::Node4 => panic!("Node4 cannot be shrinked."),
+            NodeType::Node16 => unsafe {
+                let node = node as *const dyn NodeOps<V> as *const Node16<V>;
+                let new = Box::new(Node4::from(ptr::read(node)));
+                self.pointer = Box::into_raw(new) as usize | node_type as usize;
+            },
+            NodeType::Node48 => unsafe {
+                let node = node as *const dyn NodeOps<V> as *const Node48<V>;
+                let new = Box::new(Node16::from(ptr::read(node)));
+                self.pointer = Box::into_raw(new) as usize | node_type as usize;
+            },
+            NodeType::Node256 => unsafe {
+                let node = node as *const dyn NodeOps<V> as *const Node256<V>;
+                let new = Box::new(Node48::from(ptr::read(node)));
+                self.pointer = Box::into_raw(new) as usize | node_type as usize;
+            },
+        }
+    }
 }
 
 struct NodeV<V> {
@@ -139,6 +202,27 @@ impl<V> Default for Node4<V> {
                 children: mem::uninitialized(),
             }
         }
+    }
+}
+
+impl<V> From<Node16<V>> for Node4<V> {
+    fn from(node: Node16<V>) -> Self {
+        debug_assert!(node.len <= 4);
+
+        let mut new = Self::default();
+        new.header = node.header;
+        new.len = node.len;
+
+        unsafe {
+            ptr::copy_nonoverlapping(node.keys.as_ptr(), new.keys.as_mut_ptr(), node.len as usize);
+            ptr::copy_nonoverlapping(
+                node.children.as_ptr(),
+                new.children.as_mut_ptr(),
+                node.len as usize,
+            );
+        }
+
+        new
     }
 }
 
@@ -253,6 +337,51 @@ impl<V> Default for Node16<V> {
     }
 }
 
+impl<V> From<Node4<V>> for Node16<V> {
+    fn from(node: Node4<V>) -> Self {
+        debug_assert!(node.len == 4);
+
+        let mut new = Self::default();
+        new.header = node.header;
+        new.len = node.len;
+
+        unsafe {
+            ptr::copy_nonoverlapping(node.keys.as_ptr(), new.keys.as_mut_ptr(), node.len as usize);
+            ptr::copy_nonoverlapping(
+                node.children.as_ptr(),
+                new.children.as_mut_ptr(),
+                node.len as usize,
+            );
+        }
+
+        new
+    }
+}
+
+impl<V> From<Node48<V>> for Node16<V> {
+    fn from(node: Node48<V>) -> Self {
+        debug_assert!(node.len <= 16);
+
+        let mut new = Self::default();
+        new.header = node.header;
+        new.len = node.len;
+
+        unsafe {
+            let mut i = 0;
+            for (key, index) in node.keys.iter().enumerate() {
+                if *index != 0xff {
+                    *new.keys.get_unchecked_mut(i) = key as u8;
+                    *new.children.get_unchecked_mut(i) =
+                        ptr::read(node.children.get_unchecked(*index as usize));
+                    i += 1;
+                }
+            }
+        }
+
+        new
+    }
+}
+
 impl<V> Node16<V> {
     fn keys(&self) -> &[u8] {
         unsafe { self.keys.get_unchecked(..self.len as usize) }
@@ -268,23 +397,6 @@ impl<V> Node16<V> {
 
     fn mut_children(&mut self) -> &mut [Node<V>] {
         unsafe { self.children.get_unchecked_mut(..self.len as usize) }
-    }
-
-    fn from(node: Node4<V>) -> Self {
-        let mut new = Self::default();
-        new.header = node.header;
-        new.len = node.len;
-
-        unsafe {
-            ptr::copy_nonoverlapping(node.keys.as_ptr(), new.keys.as_mut_ptr(), node.len as usize);
-            ptr::copy_nonoverlapping(
-                node.children.as_ptr(),
-                new.children.as_mut_ptr(),
-                node.len as usize,
-            );
-        }
-
-        new
     }
 }
 
@@ -330,31 +442,17 @@ impl<V> Default for Node48<V> {
             Self {
                 header: Default::default(),
                 len: 0,
-                keys: mem::uninitialized(),
-                children: mem::uninitialized(),
+                keys: arr![0xff; 256], // the invalid index is 0xff
+                children: arr![Node::null(); 48],
             }
         }
     }
 }
 
-impl<V> Node48<V> {
-    fn keys(&self) -> &[u8] {
-        unsafe { self.keys.get_unchecked(..self.len as usize) }
-    }
-
-    fn mut_keys(&mut self) -> &mut [u8] {
-        unsafe { self.keys.get_unchecked_mut(..self.len as usize) }
-    }
-
-    fn children(&self) -> &[Node<V>] {
-        unsafe { self.children.get_unchecked(..self.len as usize) }
-    }
-
-    fn mut_children(&mut self) -> &mut [Node<V>] {
-        unsafe { self.children.get_unchecked_mut(..self.len as usize) }
-    }
-
+impl<V> From<Node16<V>> for Node48<V> {
     fn from(node: Node16<V>) -> Self {
+        debug_assert!(node.len == 16);
+
         let mut new = Self::default();
 
         unsafe {
@@ -373,6 +471,48 @@ impl<V> Node48<V> {
         new.len = node.len;
 
         new
+    }
+}
+
+impl<V> From<Node256<V>> for Node48<V> {
+    fn from(node: Node256<V>) -> Self {
+        debug_assert!(node.len <= 48);
+
+        let mut new = Self::default();
+
+        unsafe {
+            // TODO: child is dropping?
+            for (key, child) in node.children.iter().enumerate() {
+                if !child.is_null() {
+                    new.len += 1;
+                    *new.keys.get_unchecked_mut(key) = (new.len - 1) as u8;
+                    *new.children.get_unchecked_mut(new.len - 1) = ptr::read(child);
+                }
+            }
+        }
+
+        new.header = node.header;
+        new.len = node.len;
+
+        new
+    }
+}
+
+impl<V> Node48<V> {
+    fn keys(&self) -> &[u8] {
+        unsafe { self.keys.get_unchecked(..self.len as usize) }
+    }
+
+    fn mut_keys(&mut self) -> &mut [u8] {
+        unsafe { self.keys.get_unchecked_mut(..self.len as usize) }
+    }
+
+    fn children(&self) -> &[Node<V>] {
+        unsafe { self.children.get_unchecked(..self.len as usize) }
+    }
+
+    fn mut_children(&mut self) -> &mut [Node<V>] {
+        unsafe { self.children.get_unchecked_mut(..self.len as usize) }
     }
 }
 
@@ -413,18 +553,18 @@ struct Node256<V> {
 impl<V> Default for Node256<V> {
     #[allow(deprecated)]
     fn default() -> Self {
-        unsafe {
-            Self {
-                header: Default::default(),
-                len: 0,
-                children: mem::uninitialized(),
-            }
+        Self {
+            header: Default::default(),
+            len: 0,
+            children: arr![Node::null(); 256],
         }
     }
 }
 
-impl<V> Node256<V> {
+impl<V> From<Node48<V>> for Node256<V> {
     fn from(node: Node48<V>) -> Self {
+        debug_assert!(node.len == 48);
+
         let mut new = Self::default();
 
         unsafe {
@@ -442,6 +582,8 @@ impl<V> Node256<V> {
         new
     }
 }
+
+impl<V> Node256<V> {}
 
 impl<V> NodeOps<V> for Node256<V> {
     #[inline]
@@ -471,8 +613,8 @@ impl<V> NodeOps<V> for Node256<V> {
     }
 }
 
-trait Encodable {
-    fn encode(self) -> Vec<u8>;
+pub trait Encodable {
+    fn encode(&self) -> Vec<u8>;
 }
 
 struct Cursor<V> {
@@ -487,7 +629,7 @@ pub struct ART<K, V> {
 
 impl<K, V> ART<K, V> {}
 
-impl<K: Eq, V> SequentialMap<K, V> for ART<K, V> {
+impl<K: Eq + Encodable, V> SequentialMap<K, V> for ART<K, V> {
     fn new() -> Self {
         todo!()
     }
