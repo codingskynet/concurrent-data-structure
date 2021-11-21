@@ -7,6 +7,7 @@ use rand::{prelude::SliceRandom, thread_rng, Rng};
 
 mod avltree;
 mod btree;
+mod art;
 mod linkedlist;
 mod queue;
 mod stack;

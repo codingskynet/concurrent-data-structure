@@ -1,4 +1,5 @@
 use std::ptr;
+use either::Either;
 
 pub mod random;
 
@@ -49,6 +50,16 @@ macro_rules! some_or {
         match $e {
             Some(r) => r,
             None => $err,
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! left_or {
+    ($e:expr, $err:expr) => {{
+        match $e {
+            Either::Left(l) => l,
+            Either::Right(_) => $err,
         }
     }};
 }

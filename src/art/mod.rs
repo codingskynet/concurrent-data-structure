@@ -7,15 +7,19 @@ use std::{
 
 use arr_macro::arr;
 use either::Either;
+use std::fmt::Debug;
 
 use crate::{
+    left_or,
     map::SequentialMap,
     util::{slice_insert, slice_remove},
 };
 
+const PREFIX_LEN: usize = 12;
+#[derive(Debug)]
 struct NodeHeader {
-    len: u32,         // the len of prefix
-    prefix: [u8; 12], // prefix for path compression
+    len: u32,                 // the len of prefix
+    prefix: [u8; PREFIX_LEN], // prefix for path compression
 }
 
 impl Default for NodeHeader {
@@ -43,10 +47,14 @@ enum NodeType {
 }
 
 trait NodeOps<V> {
+    fn header(&self) -> &NodeHeader;
+    fn header_mut(&mut self) -> &mut NodeHeader;
     fn is_full(&self) -> bool;
     fn is_shrinkable(&self) -> bool;
+    fn get_any_child(&self) -> Option<NodeV<V>>;
     fn insert(&mut self, key: u8, node: Node<V>) -> Result<(), Node<V>>;
     fn lookup(&self, key: u8) -> Option<&Node<V>>;
+    fn lookup_mut(&mut self, key: u8) -> Option<&mut Node<V>>;
     fn update(&mut self, key: u8, node: Node<V>) -> Result<Node<V>, Node<V>>;
     fn remove(&mut self, key: u8) -> Result<Node<V>, ()>;
 }
@@ -55,6 +63,23 @@ trait NodeOps<V> {
 struct Node<V> {
     pointer: usize,
     _marker: PhantomData<Box<V>>,
+}
+
+impl<V: Debug> Debug for Node<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        unsafe {
+            let pointer = self.pointer & !NODETYPE_MASK;
+            let tag = mem::transmute(self.pointer & NODETYPE_MASK);
+
+            match tag {
+                NodeType::Value => (&*(pointer as *const NodeV<V>)).fmt(f),
+                NodeType::Node4 => (&*(pointer as *const Node4<V>)).fmt(f),
+                NodeType::Node16 => (&*(pointer as *const Node16<V>)).fmt(f),
+                NodeType::Node48 => (&*(pointer as *const Node48<V>)).fmt(f),
+                NodeType::Node256 => (&*(pointer as *const Node256<V>)).fmt(f),
+            }
+        }
+    }
 }
 
 impl<V> Node<V> {
@@ -73,7 +98,7 @@ impl<V> Node<V> {
         }
     }
 
-    fn deref_mut(&mut self) -> Either<&mut dyn NodeOps<V>, &mut NodeV<V>> {
+    fn deref_mut(&self) -> Either<&mut dyn NodeOps<V>, &mut NodeV<V>> {
         unsafe {
             let pointer = self.pointer & !NODETYPE_MASK;
             let tag = mem::transmute(self.pointer & NODETYPE_MASK);
@@ -88,7 +113,7 @@ impl<V> Node<V> {
         }
     }
 
-    fn new(node: impl NodeOps<V>, node_type: NodeType) -> Self {
+    fn new<T>(node: T, node_type: NodeType) -> Self {
         let node = Box::into_raw(Box::new(node));
 
         Self {
@@ -116,7 +141,7 @@ impl<V> Node<V> {
     /// extend node to bigger one only if necessary
     fn extend(&mut self) {
         if self.deref().is_right() {
-            panic!("NodeV cannot be extended.")
+            return;
         }
 
         if !self.deref().left().unwrap().is_full() {
@@ -150,7 +175,7 @@ impl<V> Node<V> {
     /// shrink node to smaller one only if necessary
     fn shrink(&mut self) {
         if self.deref().is_right() {
-            panic!("NodeV cannot be shrinked.")
+            return;
         }
 
         if !self.deref().left().unwrap().is_shrinkable() {
@@ -180,6 +205,40 @@ impl<V> Node<V> {
             },
         }
     }
+
+    /// compare the keys from depth to header.len
+    fn prefix_match(keys: &[u8], node: &dyn NodeOps<V>, depth: usize) -> Result<(), usize> {
+        let header = node.header();
+
+        for (index, prefix) in unsafe {
+            header
+                .prefix
+                .get_unchecked(..header.len as usize)
+                .iter()
+                .enumerate()
+        } {
+            if keys[depth + index] != *prefix {
+                return Err(depth + index);
+            }
+        }
+
+        if header.len > PREFIX_LEN as u32 {
+            // check strictly by using leaf node
+            let any_child = node.get_any_child().unwrap();
+
+            let mut depth = depth + PREFIX_LEN;
+
+            while depth < depth + header.len as usize {
+                if keys[depth] != any_child.key[depth] {
+                    return Err(depth);
+                }
+
+                depth += 1;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 struct NodeV<V> {
@@ -187,11 +246,40 @@ struct NodeV<V> {
     value: V,
 }
 
+impl<V: Debug> Debug for NodeV<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NodeV")
+            .field("key", &self.key)
+            .field("value", &self.value)
+            .finish()
+    }
+}
+
+impl<V> NodeV<V> {
+    fn new(key: Vec<u8>, value: V) -> Self {
+        Self {
+            key: key.into(),
+            value,
+        }
+    }
+}
+
 struct Node4<V> {
     header: NodeHeader,
     len: usize,
     keys: [u8; 4],
     children: [Node<V>; 4],
+}
+
+impl<V: Debug> Debug for Node4<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Node4")
+            .field("header", &self.header)
+            .field("len", &self.len)
+            .field("keys", &self.keys())
+            .field("children", &self.children())
+            .finish()
+    }
 }
 
 impl<V> Default for Node4<V> {
@@ -249,6 +337,16 @@ impl<V> Node4<V> {
 
 impl<V> NodeOps<V> for Node4<V> {
     #[inline]
+    fn header(&self) -> &NodeHeader {
+        &self.header
+    }
+
+    #[inline]
+    fn header_mut(&mut self) -> &mut NodeHeader {
+        &mut self.header
+    }
+
+    #[inline]
     fn is_full(&self) -> bool {
         self.len == 4
     }
@@ -256,6 +354,10 @@ impl<V> NodeOps<V> for Node4<V> {
     #[inline]
     fn is_shrinkable(&self) -> bool {
         false
+    }
+
+    fn get_any_child(&self) -> Option<NodeV<V>> {
+        todo!()
     }
 
     fn insert(&mut self, key: u8, node: Node<V>) -> Result<(), Node<V>> {
@@ -281,6 +383,16 @@ impl<V> NodeOps<V> for Node4<V> {
         for (index, k) in self.keys().iter().enumerate() {
             if key == *k {
                 return unsafe { Some(self.children.get_unchecked(index)) };
+            }
+        }
+
+        None
+    }
+
+    fn lookup_mut(&mut self, key: u8) -> Option<&mut Node<V>> {
+        for (index, k) in self.keys().iter().enumerate() {
+            if key == *k {
+                return unsafe { Some(self.children.get_unchecked_mut(index)) };
             }
         }
 
@@ -326,6 +438,17 @@ struct Node16<V> {
     len: usize,
     keys: [u8; 16],
     children: [Node<V>; 16],
+}
+
+impl<V: Debug> Debug for Node16<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Node16")
+            .field("header", &self.header)
+            .field("len", &self.len)
+            .field("keys", &self.keys())
+            .field("children", &self.children())
+            .finish()
+    }
 }
 
 impl<V> Default for Node16<V> {
@@ -407,6 +530,16 @@ impl<V> Node16<V> {
 
 impl<V> NodeOps<V> for Node16<V> {
     #[inline]
+    fn header(&self) -> &NodeHeader {
+        &self.header
+    }
+
+    #[inline]
+    fn header_mut(&mut self) -> &mut NodeHeader {
+        &mut self.header
+    }
+
+    #[inline]
     fn is_full(&self) -> bool {
         self.len == 16
     }
@@ -414,6 +547,10 @@ impl<V> NodeOps<V> for Node16<V> {
     #[inline]
     fn is_shrinkable(&self) -> bool {
         self.len <= 4
+    }
+
+    fn get_any_child(&self) -> Option<NodeV<V>> {
+        todo!()
     }
 
     fn insert(&mut self, key: u8, node: Node<V>) -> Result<(), Node<V>> {
@@ -439,6 +576,16 @@ impl<V> NodeOps<V> for Node16<V> {
         for (index, k) in self.keys().iter().enumerate() {
             if key == *k {
                 return unsafe { Some(self.children.get_unchecked(index)) };
+            }
+        }
+
+        None
+    }
+
+    fn lookup_mut(&mut self, key: u8) -> Option<&mut Node<V>> {
+        for (index, k) in self.keys().iter().enumerate() {
+            if key == *k {
+                return unsafe { Some(self.children.get_unchecked_mut(index)) };
             }
         }
 
@@ -478,12 +625,30 @@ impl<V> NodeOps<V> for Node16<V> {
         Err(())
     }
 }
-
 struct Node48<V> {
     header: NodeHeader,
     len: usize,
     keys: [u8; 256],
     children: [Node<V>; 48],
+}
+
+impl<V: Debug> Debug for Node48<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let valid_keys = self
+            .keys
+            .iter()
+            .enumerate()
+            .filter(|(_, index)| **index != 0xff)
+            .map(|(key, _)| key)
+            .collect::<Vec<_>>();
+
+        f.debug_struct("Node48")
+            .field("header", &self.header)
+            .field("len", &self.len)
+            .field("keys", &valid_keys)
+            .field("children", &self.children())
+            .finish()
+    }
 }
 
 impl<V> Default for Node48<V> {
@@ -559,6 +724,16 @@ impl<V> Node48<V> {
 
 impl<V> NodeOps<V> for Node48<V> {
     #[inline]
+    fn header(&self) -> &NodeHeader {
+        &self.header
+    }
+
+    #[inline]
+    fn header_mut(&mut self) -> &mut NodeHeader {
+        &mut self.header
+    }
+
+    #[inline]
     fn is_full(&self) -> bool {
         self.len == 48
     }
@@ -566,6 +741,10 @@ impl<V> NodeOps<V> for Node48<V> {
     #[inline]
     fn is_shrinkable(&self) -> bool {
         self.len <= 16
+    }
+
+    fn get_any_child(&self) -> Option<NodeV<V>> {
+        todo!()
     }
 
     fn insert(&mut self, key: u8, node: Node<V>) -> Result<(), Node<V>> {
@@ -593,6 +772,16 @@ impl<V> NodeOps<V> for Node48<V> {
             None
         } else {
             unsafe { Some(self.children.get_unchecked(*index as usize)) }
+        }
+    }
+
+    fn lookup_mut(&mut self, key: u8) -> Option<&mut Node<V>> {
+        let index = unsafe { self.keys.get_unchecked(key as usize) };
+
+        if *index == 0xff {
+            None
+        } else {
+            unsafe { Some(self.children.get_unchecked_mut(*index as usize)) }
         }
     }
 
@@ -630,6 +819,23 @@ struct Node256<V> {
     children: [Node<V>; 256],
 }
 
+impl<V: Debug> Debug for Node256<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let valid_children = self
+            .children
+            .iter()
+            .enumerate()
+            .filter(|(_, child)| !child.is_null())
+            .collect::<Vec<_>>();
+
+        f.debug_struct("Node256")
+            .field("header", &self.header)
+            .field("len", &self.len)
+            .field("children", &valid_children)
+            .finish()
+    }
+}
+
 impl<V> Default for Node256<V> {
     #[allow(deprecated)]
     fn default() -> Self {
@@ -663,9 +869,17 @@ impl<V> From<Node48<V>> for Node256<V> {
     }
 }
 
-impl<V> Node256<V> {}
-
 impl<V> NodeOps<V> for Node256<V> {
+    #[inline]
+    fn header(&self) -> &NodeHeader {
+        &self.header
+    }
+
+    #[inline]
+    fn header_mut(&mut self) -> &mut NodeHeader {
+        &mut self.header
+    }
+
     #[inline]
     fn is_full(&self) -> bool {
         self.len == 256
@@ -674,6 +888,10 @@ impl<V> NodeOps<V> for Node256<V> {
     #[inline]
     fn is_shrinkable(&self) -> bool {
         self.len <= 48
+    }
+
+    fn get_any_child(&self) -> Option<NodeV<V>> {
+        todo!()
     }
 
     fn insert(&mut self, key: u8, node: Node<V>) -> Result<(), Node<V>> {
@@ -689,6 +907,16 @@ impl<V> NodeOps<V> for Node256<V> {
 
     fn lookup(&self, key: u8) -> Option<&Node<V>> {
         let child = unsafe { self.children.get_unchecked(key as usize) };
+
+        if child.is_null() {
+            None
+        } else {
+            Some(child)
+        }
+    }
+
+    fn lookup_mut(&mut self, key: u8) -> Option<&mut Node<V>> {
+        let child = unsafe { self.children.get_unchecked_mut(key as usize) };
 
         if child.is_null() {
             None
@@ -724,6 +952,12 @@ pub trait Encodable {
     fn encode(&self) -> Vec<u8>;
 }
 
+impl Encodable for String {
+    fn encode(&self) -> Vec<u8> {
+        self.clone().into_bytes()
+    }
+}
+
 struct Cursor<V> {
     parent: Option<NonNull<Node<V>>>,
     current: NonNull<Node<V>>,
@@ -734,11 +968,17 @@ pub struct ART<K, V> {
     _marker: PhantomData<K>,
 }
 
+impl<K, V: Debug> Debug for ART<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ART").field("root", &self.root).finish()
+    }
+}
+
 impl<K, V> ART<K, V> {}
 
 impl<K: Eq + Encodable, V> SequentialMap<K, V> for ART<K, V> {
     fn new() -> Self {
-        let root = Node::new(Node256::default(), NodeType::Node256);
+        let root = Node::new(Node256::<V>::default(), NodeType::Node256);
 
         Self {
             root,
@@ -747,11 +987,114 @@ impl<K: Eq + Encodable, V> SequentialMap<K, V> for ART<K, V> {
     }
 
     fn insert(&mut self, key: &K, value: V) -> Result<(), V> {
-        todo!()
+        let keys = key.encode();
+        let mut depth = 0;
+        let mut prefix_len: u32 = 0;
+        let mut parent = None;
+        let mut current = NonNull::new(&mut self.root).unwrap();
+
+        while depth < keys.len() {
+            let current_ref = unsafe { current.as_mut() };
+            let node = left_or!(current_ref.deref_mut(), break);
+
+            if let Err(common_depth) = Node::prefix_match(&keys, node, depth) {
+                prefix_len = (common_depth - depth) as u32;
+                break;
+            }
+
+            let prefix = node.header().len;
+
+            if let Some(node) = node.lookup_mut(keys[depth]) {
+                depth += 1 + prefix as usize;
+                parent = Some(current);
+                current = NonNull::new(node).unwrap();
+            } else {
+                prefix_len = prefix;
+                break;
+            }
+        }
+
+        let current_ref = unsafe { current.as_mut() };
+        current_ref.extend();
+
+        match current_ref.deref_mut() {
+            Either::Left(node) => {
+                let key = keys[depth];
+                let new = NodeV::new(keys.clone(), value);
+
+                if prefix_len == node.header().len {
+                    // just insert value into this node
+                    let insert = node.insert(key, Node::new(new, NodeType::Value));
+                    debug_assert!(insert.is_ok());
+                } else {
+                    // split prefix
+                    let mut inter_node = Node4::<V>::default();
+                    inter_node
+                        .header
+                        .prefix
+                        .clone_from_slice(&keys[depth..(depth + prefix_len as usize)]);
+                    inter_node.header.len = prefix_len;
+
+                    let mut inter_node_ptr = NonNull::new(&mut inter_node).unwrap();
+
+                    // re-set the old's prefix
+                    let header = node.header_mut();
+                    let prefix = header.prefix.clone();
+                    unsafe {
+                        ptr::copy_nonoverlapping(
+                            prefix.as_ptr(),
+                            header.prefix.as_mut_ptr(),
+                            (header.len - prefix_len) as usize,
+                        )
+                    };
+                    header.len = header.len - prefix_len;
+
+                    let old = unsafe {
+                        mem::replace(current.as_mut(), Node::new(inter_node, NodeType::Node4))
+                    };
+
+                    let inter_node_ptr = unsafe { inter_node_ptr.as_mut() };
+                    let insert_old = inter_node_ptr
+                        .insert(node.header().prefix[depth + prefix_len as usize], old);
+                    debug_assert!(insert_old.is_ok());
+                    let insert_new = inter_node_ptr.insert(key, Node::new(new, NodeType::Value));
+                    debug_assert!(insert_new.is_ok());
+                }
+
+                Ok(())
+            }
+            Either::Right(_) => Err(value),
+        }
     }
 
     fn lookup(&self, key: &K) -> Option<&V> {
-        todo!()
+        let keys = key.encode();
+        let mut depth = 0;
+
+        let mut current = &self.root;
+
+        while depth < keys.len() {
+            let node = left_or!(current.deref(), return None);
+            depth += node.header().len as usize;
+
+            if let Some(node) = node.lookup(keys[depth]) {
+                depth += 1;
+                current = node;
+            } else {
+                return None;
+            }
+        }
+
+        match current.deref() {
+            Either::Left(_) => None,
+            Either::Right(nodev) => {
+                if *nodev.key == keys {
+                    Some(&nodev.value)
+                } else {
+                    None
+                }
+            }
+        }
     }
 
     fn remove(&mut self, key: &K) -> Result<V, ()> {
