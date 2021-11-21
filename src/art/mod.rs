@@ -2,6 +2,7 @@ use std::{
     cmp::Ordering,
     marker::PhantomData,
     mem,
+    ops::Add,
     ptr::{self, NonNull},
 };
 
@@ -16,10 +17,21 @@ use crate::{
 };
 
 const PREFIX_LEN: usize = 12;
-#[derive(Debug)]
+const KEY_ENDMARK: u8 = 0xff;
 struct NodeHeader {
     len: u32,                 // the len of prefix
     prefix: [u8; PREFIX_LEN], // prefix for path compression
+}
+
+impl Debug for NodeHeader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        unsafe {
+            f.debug_struct("NodeHeader")
+                .field("len", &self.len)
+                .field("prefix", &self.prefix.get_unchecked(..self.len as usize))
+                .finish()
+        }
+    }
 }
 
 impl Default for NodeHeader {
@@ -156,19 +168,19 @@ impl<V> Node<V> {
             NodeType::Node4 => unsafe {
                 let node = node as *const dyn NodeOps<V> as *const Node4<V>;
                 let new = Box::new(Node16::from(ptr::read(node)));
-                self.pointer = Box::into_raw(new) as usize | node_type as usize;
+                self.pointer = Box::into_raw(new) as usize | NodeType::Node16 as usize;
             },
             NodeType::Node16 => unsafe {
                 let node = node as *const dyn NodeOps<V> as *const Node16<V>;
                 let new = Box::new(Node48::from(ptr::read(node)));
-                self.pointer = Box::into_raw(new) as usize | node_type as usize;
+                self.pointer = Box::into_raw(new) as usize | NodeType::Node48 as usize;
             },
             NodeType::Node48 => unsafe {
                 let node = node as *const dyn NodeOps<V> as *const Node48<V>;
                 let new = Box::new(Node256::from(ptr::read(node)));
-                self.pointer = Box::into_raw(new) as usize | node_type as usize;
+                self.pointer = Box::into_raw(new) as usize | NodeType::Node256 as usize;
             },
-            NodeType::Node256 => panic!("Node256 cannot be extended."),
+            NodeType::Node256 => {}
         }
     }
 
@@ -187,7 +199,7 @@ impl<V> Node<V> {
 
         match node_type {
             NodeType::Value => unreachable!(),
-            NodeType::Node4 => panic!("Node4 cannot be shrinked."),
+            NodeType::Node4 => {}
             NodeType::Node16 => unsafe {
                 let node = node as *const dyn NodeOps<V> as *const Node16<V>;
                 let new = Box::new(Node4::from(ptr::read(node)));
@@ -376,7 +388,14 @@ impl<V> NodeOps<V> for Node4<V> {
             }
         }
 
-        Err(node)
+        let index = self.len;
+        unsafe {
+            self.len += 1;
+            slice_insert(self.mut_keys(), index, key);
+            slice_insert(self.mut_children(), index, node);
+        }
+
+        Ok(())
     }
 
     fn lookup(&self, key: u8) -> Option<&Node<V>> {
@@ -569,7 +588,14 @@ impl<V> NodeOps<V> for Node16<V> {
             }
         }
 
-        Err(node)
+        let index = self.len;
+        unsafe {
+            self.len += 1;
+            slice_insert(self.mut_keys(), index, key);
+            slice_insert(self.mut_children(), index, node);
+        }
+
+        Ok(())
     }
 
     fn lookup(&self, key: u8) -> Option<&Node<V>> {
@@ -954,13 +980,10 @@ pub trait Encodable {
 
 impl Encodable for String {
     fn encode(&self) -> Vec<u8> {
-        self.clone().into_bytes()
+        let mut array = self.clone().into_bytes();
+        array.push(KEY_ENDMARK); // prevent to certain string cannot be the prefix of another string
+        array
     }
-}
-
-struct Cursor<V> {
-    parent: Option<NonNull<Node<V>>>,
-    current: NonNull<Node<V>>,
 }
 
 pub struct ART<K, V> {
@@ -976,7 +999,7 @@ impl<K, V: Debug> Debug for ART<K, V> {
 
 impl<K, V> ART<K, V> {}
 
-impl<K: Eq + Encodable, V> SequentialMap<K, V> for ART<K, V> {
+impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
     fn new() -> Self {
         let root = Node::new(Node256::<V>::default(), NodeType::Node256);
 
@@ -989,8 +1012,7 @@ impl<K: Eq + Encodable, V> SequentialMap<K, V> for ART<K, V> {
     fn insert(&mut self, key: &K, value: V) -> Result<(), V> {
         let keys = key.encode();
         let mut depth = 0;
-        let mut prefix_len: u32 = 0;
-        let mut parent = None;
+        let mut common_prefix: u32 = 0;
         let mut current = NonNull::new(&mut self.root).unwrap();
 
         while depth < keys.len() {
@@ -998,7 +1020,7 @@ impl<K: Eq + Encodable, V> SequentialMap<K, V> for ART<K, V> {
             let node = left_or!(current_ref.deref_mut(), break);
 
             if let Err(common_depth) = Node::prefix_match(&keys, node, depth) {
-                prefix_len = (common_depth - depth) as u32;
+                common_prefix = (common_depth - depth) as u32;
                 break;
             }
 
@@ -1006,10 +1028,9 @@ impl<K: Eq + Encodable, V> SequentialMap<K, V> for ART<K, V> {
 
             if let Some(node) = node.lookup_mut(keys[depth]) {
                 depth += 1 + prefix as usize;
-                parent = Some(current);
                 current = NonNull::new(node).unwrap();
             } else {
-                prefix_len = prefix;
+                common_prefix = prefix;
                 break;
             }
         }
@@ -1022,20 +1043,23 @@ impl<K: Eq + Encodable, V> SequentialMap<K, V> for ART<K, V> {
                 let key = keys[depth];
                 let new = NodeV::new(keys.clone(), value);
 
-                if prefix_len == node.header().len {
+                if common_prefix == node.header().len {
                     // just insert value into this node
                     let insert = node.insert(key, Node::new(new, NodeType::Value));
                     debug_assert!(insert.is_ok());
                 } else {
                     // split prefix
                     let mut inter_node = Node4::<V>::default();
-                    inter_node
-                        .header
-                        .prefix
-                        .clone_from_slice(&keys[depth..(depth + prefix_len as usize)]);
-                    inter_node.header.len = prefix_len;
 
-                    let mut inter_node_ptr = NonNull::new(&mut inter_node).unwrap();
+                    unsafe {
+                        ptr::copy_nonoverlapping(
+                            keys.as_ptr().add(depth),
+                            inter_node.header.prefix.as_mut_ptr(),
+                            common_prefix as usize,
+                        );
+                    }
+
+                    inter_node.header.len = common_prefix;
 
                     // re-set the old's prefix
                     let header = node.header_mut();
@@ -1044,26 +1068,63 @@ impl<K: Eq + Encodable, V> SequentialMap<K, V> for ART<K, V> {
                         ptr::copy_nonoverlapping(
                             prefix.as_ptr(),
                             header.prefix.as_mut_ptr(),
-                            (header.len - prefix_len) as usize,
+                            (header.len - common_prefix) as usize,
                         )
                     };
-                    header.len = header.len - prefix_len;
+                    header.len = header.len - common_prefix;
 
-                    let old = unsafe {
-                        mem::replace(current.as_mut(), Node::new(inter_node, NodeType::Node4))
-                    };
+                    let current = unsafe { current.as_mut() };
+                    let old = mem::replace(current, Node::new(inter_node, NodeType::Node4));
+                    let current = current.deref_mut().left().unwrap();
 
-                    let inter_node_ptr = unsafe { inter_node_ptr.as_mut() };
-                    let insert_old = inter_node_ptr
-                        .insert(node.header().prefix[depth + prefix_len as usize], old);
+                    let insert_old =
+                        current.insert(node.header().prefix[depth + common_prefix as usize], old);
                     debug_assert!(insert_old.is_ok());
-                    let insert_new = inter_node_ptr.insert(key, Node::new(new, NodeType::Value));
+                    let insert_new = current.insert(key, Node::new(new, NodeType::Value));
                     debug_assert!(insert_new.is_ok());
                 }
 
                 Ok(())
             }
-            Either::Right(_) => Err(value),
+            Either::Right(nodev) => {
+                if depth == keys.len() {
+                    return Err(value);
+                }
+
+                let new = NodeV::new(keys.clone(), value);
+
+                // insert inter node with zero prefix
+                // ex) 'aE', 'aaE'
+                let key = keys[depth];
+
+                let mut common_prefix = 0;
+
+                while keys[depth + common_prefix] == nodev.key[depth + common_prefix] {
+                    common_prefix += 1;
+                }
+
+                let mut inter_node = Node4::<V>::default();
+                unsafe {
+                    ptr::copy_nonoverlapping(
+                        keys.as_ptr().add(depth),
+                        inter_node.header.prefix.as_mut_ptr(),
+                        common_prefix,
+                    );
+                }
+                inter_node.header.len = common_prefix as u32;
+
+                let current = unsafe { current.as_mut() };
+                let old = mem::replace(current, Node::new(inter_node, NodeType::Node4));
+
+                let current = current.deref_mut().left().unwrap();
+
+                let insert_old = current.insert(nodev.key[depth], old);
+                debug_assert!(insert_old.is_ok());
+                let insert_new = current.insert(key, Node::new(new, NodeType::Value));
+                debug_assert!(insert_new.is_ok());
+
+                Ok(())
+            }
         }
     }
 
@@ -1074,7 +1135,7 @@ impl<K: Eq + Encodable, V> SequentialMap<K, V> for ART<K, V> {
         let mut current = &self.root;
 
         while depth < keys.len() {
-            let node = left_or!(current.deref(), return None);
+            let node = left_or!(current.deref(), break);
             depth += node.header().len as usize;
 
             if let Some(node) = node.lookup(keys[depth]) {
