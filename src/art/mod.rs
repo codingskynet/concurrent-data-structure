@@ -8,7 +8,10 @@ use std::{
 use arr_macro::arr;
 use either::Either;
 
-use crate::{map::SequentialMap, util::slice_insert};
+use crate::{
+    map::SequentialMap,
+    util::{slice_insert, slice_remove},
+};
 
 struct NodeHeader {
     len: u32,         // the len of prefix
@@ -256,19 +259,7 @@ impl<V> NodeOps<V> for Node4<V> {
     }
 
     fn insert(&mut self, key: u8, node: Node<V>) -> Result<(), Node<V>> {
-        // since the &mut self is the pointer of Node4<V>, not the pointer of Node<V>,
-        // simple extension like this is impossble.
-        // if self.len == 4 {
-        //     unsafe {
-        //         let pointer = self as *const Node4<V> as *mut Node<V>;
-        //         let extended = Node::new(
-        //             Node16::from(ptr::read(pointer as *const Node4<V>)),
-        //             NodeType::Node16,
-        //         );
-        //         *(pointer as *mut Node<V>) = extended;
-        //         return (*pointer).deref_mut().left().unwrap().insert(key, node);
-        //     }
-        // }
+        debug_assert!(!self.is_full());
 
         for (index, k) in self.keys().iter().enumerate() {
             match key.cmp(k) {
@@ -312,7 +303,21 @@ impl<V> NodeOps<V> for Node4<V> {
     }
 
     fn remove(&mut self, key: u8) -> Result<Node<V>, ()> {
-        todo!()
+        debug_assert!(self.len != 0);
+
+        for (index, k) in self.keys().iter().enumerate() {
+            match key.cmp(k) {
+                Ordering::Less => {}
+                Ordering::Equal => unsafe {
+                    self.len -= 1;
+                    let node = mem::replace(self.children.get_unchecked_mut(index), Node::null());
+                    return Ok(node);
+                },
+                Ordering::Greater => {}
+            }
+        }
+
+        Err(())
     }
 }
 
@@ -412,19 +417,65 @@ impl<V> NodeOps<V> for Node16<V> {
     }
 
     fn insert(&mut self, key: u8, node: Node<V>) -> Result<(), Node<V>> {
-        todo!()
+        debug_assert!(!self.is_full());
+
+        for (index, k) in self.keys().iter().enumerate() {
+            match key.cmp(k) {
+                Ordering::Less => unsafe {
+                    self.len += 1;
+                    slice_insert(self.mut_keys(), index, key);
+                    slice_insert(self.mut_children(), index, node);
+                    return Ok(());
+                },
+                Ordering::Equal => return Err(node),
+                Ordering::Greater => {}
+            }
+        }
+
+        Err(node)
     }
 
     fn lookup(&self, key: u8) -> Option<&Node<V>> {
-        todo!()
+        for (index, k) in self.keys().iter().enumerate() {
+            if key == *k {
+                return unsafe { Some(self.children.get_unchecked(index)) };
+            }
+        }
+
+        None
     }
 
     fn update(&mut self, key: u8, node: Node<V>) -> Result<Node<V>, Node<V>> {
-        todo!()
+        for (index, k) in self.keys().iter().enumerate() {
+            match key.cmp(k) {
+                Ordering::Less => {}
+                Ordering::Equal => unsafe {
+                    let node = mem::replace(self.children.get_unchecked_mut(index), node);
+                    return Ok(node);
+                },
+                Ordering::Greater => {}
+            }
+        }
+
+        Err(node)
     }
 
     fn remove(&mut self, key: u8) -> Result<Node<V>, ()> {
-        todo!()
+        debug_assert!(self.len != 0);
+
+        for (index, k) in self.keys().iter().enumerate() {
+            match key.cmp(k) {
+                Ordering::Less => {}
+                Ordering::Equal => unsafe {
+                    self.len -= 1;
+                    let node = mem::replace(self.children.get_unchecked_mut(index), Node::null());
+                    return Ok(node);
+                },
+                Ordering::Greater => {}
+            }
+        }
+
+        Err(())
     }
 }
 
@@ -438,13 +489,11 @@ struct Node48<V> {
 impl<V> Default for Node48<V> {
     #[allow(deprecated)]
     fn default() -> Self {
-        unsafe {
-            Self {
-                header: Default::default(),
-                len: 0,
-                keys: arr![0xff; 256], // the invalid index is 0xff
-                children: arr![Node::null(); 48],
-            }
+        Self {
+            header: Default::default(),
+            len: 0,
+            keys: arr![0xff; 256], // the invalid index is 0xff
+            children: arr![Node::null(); 48],
         }
     }
 }
@@ -499,14 +548,6 @@ impl<V> From<Node256<V>> for Node48<V> {
 }
 
 impl<V> Node48<V> {
-    fn keys(&self) -> &[u8] {
-        unsafe { self.keys.get_unchecked(..self.len as usize) }
-    }
-
-    fn mut_keys(&mut self) -> &mut [u8] {
-        unsafe { self.keys.get_unchecked_mut(..self.len as usize) }
-    }
-
     fn children(&self) -> &[Node<V>] {
         unsafe { self.children.get_unchecked(..self.len as usize) }
     }
@@ -528,19 +569,58 @@ impl<V> NodeOps<V> for Node48<V> {
     }
 
     fn insert(&mut self, key: u8, node: Node<V>) -> Result<(), Node<V>> {
-        todo!()
+        debug_assert!(!self.is_full());
+
+        let index = unsafe { self.keys.get_unchecked_mut(key as usize) };
+
+        if *index != 0xff {
+            Err(node)
+        } else {
+            unsafe {
+                *self.children.get_unchecked_mut(self.len) = node;
+            }
+
+            *index = self.len as u8;
+            self.len += 1;
+            Ok(())
+        }
     }
 
     fn lookup(&self, key: u8) -> Option<&Node<V>> {
-        todo!()
+        let index = unsafe { self.keys.get_unchecked(key as usize) };
+
+        if *index == 0xff {
+            None
+        } else {
+            unsafe { Some(self.children.get_unchecked(*index as usize)) }
+        }
     }
 
     fn update(&mut self, key: u8, node: Node<V>) -> Result<Node<V>, Node<V>> {
-        todo!()
+        let index = unsafe { self.keys.get_unchecked_mut(key as usize) };
+
+        if *index == 0xff {
+            Err(node)
+        } else {
+            let child = unsafe { self.children.get_unchecked_mut(*index as usize) };
+            let old = mem::replace(child, node);
+            Ok(old)
+        }
     }
 
     fn remove(&mut self, key: u8) -> Result<Node<V>, ()> {
-        todo!()
+        let index = unsafe { self.keys.get_unchecked(key as usize).clone() };
+
+        if index == 0xff {
+            Err(())
+        } else {
+            unsafe {
+                let node = slice_remove(self.mut_children(), index as usize);
+                *self.keys.get_unchecked_mut(key as usize) = 0xff;
+                self.len -= 1;
+                Ok(node)
+            }
+        }
     }
 }
 
@@ -568,11 +648,11 @@ impl<V> From<Node48<V>> for Node256<V> {
         let mut new = Self::default();
 
         unsafe {
-            for key in node.keys() {
-                *new.children.get_unchecked_mut(*key as usize) = ptr::read(
-                    node.children
-                        .get_unchecked(*node.keys.get_unchecked(*key as usize) as usize),
-                );
+            for (key, index) in node.keys.iter().enumerate() {
+                if *index != 0xff {
+                    *new.children.get_unchecked_mut(key) =
+                        ptr::read(node.children.get_unchecked(*index as usize));
+                }
             }
         }
 
@@ -597,19 +677,46 @@ impl<V> NodeOps<V> for Node256<V> {
     }
 
     fn insert(&mut self, key: u8, node: Node<V>) -> Result<(), Node<V>> {
-        todo!()
+        let child = unsafe { self.children.get_unchecked_mut(key as usize) };
+
+        if child.is_null() {
+            *child = node;
+            Ok(())
+        } else {
+            Err(node)
+        }
     }
 
     fn lookup(&self, key: u8) -> Option<&Node<V>> {
-        todo!()
+        let child = unsafe { self.children.get_unchecked(key as usize) };
+
+        if child.is_null() {
+            None
+        } else {
+            Some(child)
+        }
     }
 
     fn update(&mut self, key: u8, node: Node<V>) -> Result<Node<V>, Node<V>> {
-        todo!()
+        let child = unsafe { self.children.get_unchecked_mut(key as usize) };
+
+        if child.is_null() {
+            Err(node)
+        } else {
+            let old = mem::replace(child, node);
+            Ok(old)
+        }
     }
 
     fn remove(&mut self, key: u8) -> Result<Node<V>, ()> {
-        todo!()
+        let child = unsafe { self.children.get_unchecked_mut(key as usize) };
+
+        if child.is_null() {
+            Err(())
+        } else {
+            let node = mem::replace(child, Node::null());
+            Ok(node)
+        }
     }
 }
 
@@ -623,7 +730,7 @@ struct Cursor<V> {
 }
 
 pub struct ART<K, V> {
-    root: NonNull<Node<V>>,
+    root: Node<V>,
     _marker: PhantomData<K>,
 }
 
@@ -631,7 +738,12 @@ impl<K, V> ART<K, V> {}
 
 impl<K: Eq + Encodable, V> SequentialMap<K, V> for ART<K, V> {
     fn new() -> Self {
-        todo!()
+        let root = Node::new(Node256::default(), NodeType::Node256);
+
+        Self {
+            root,
+            _marker: PhantomData,
+        }
     }
 
     fn insert(&mut self, key: &K, value: V) -> Result<(), V> {
