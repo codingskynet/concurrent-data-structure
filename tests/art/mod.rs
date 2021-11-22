@@ -45,5 +45,4 @@ fn test_large_key_art() {
     assert_eq!(art.remove(&"1234567890123456789012345678901234567890".to_string()), Ok(4));
     assert_eq!(art.remove(&"12345678901234567890123456789012345678901234567890".to_string()), Ok(5));
     assert_eq!(art.remove(&"123456789012345678901234567890123456789012345678901234567890".to_string()), Ok(6));
-    println!("{:?}", art);
 }

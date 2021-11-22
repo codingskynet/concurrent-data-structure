@@ -229,6 +229,69 @@ impl<V> Node<V> {
         }
     }
 
+    /// compress path if the node is Node4 with having one child
+    fn compress_path(&mut self) {
+        if self.deref().is_right() {
+            return;
+        }
+
+        if self.node_type() != NodeType::Node4 {
+            return;
+        }
+
+        unsafe {
+            if self.deref().left().unwrap().size() != 1 {
+                return;
+            }
+
+            let node = Box::from_raw((self.pointer & !NODETYPE_MASK) as *mut Node4<V>);
+
+            let child_key = *node.keys.get_unchecked(0);
+            let child = ptr::read(node.children.get_unchecked(0));
+
+            // if the child is not NodeV<V>, then move prefix from parent to child
+            if let Either::Left(child) = child.deref_mut() {
+                // push child key on front of child header prefix
+                let prefix_ptr = child.header_mut().prefix.as_mut_ptr();
+                let prefix_len = child.header().len as usize;
+
+                ptr::copy(
+                    prefix_ptr,
+                    prefix_ptr.add(1),
+                    min(prefix_len, PREFIX_LEN - 1),
+                );
+                *prefix_ptr = child_key;
+
+                child.header_mut().len += 1;
+
+                if node.header.len > 0 {
+                    // println!("prefix move");
+                    let node_prefix_len = node.header.len as usize;
+                    let prefix_len = child.header().len as usize;
+
+                    if PREFIX_LEN > node_prefix_len {
+                        ptr::copy(
+                            prefix_ptr,
+                            prefix_ptr.add(node_prefix_len as usize),
+                            min(prefix_len, PREFIX_LEN - node_prefix_len),
+                        );
+                    }
+
+                    ptr::copy_nonoverlapping(
+                        node.header.prefix.as_ptr(),
+                        prefix_ptr,
+                        min(node_prefix_len, PREFIX_LEN),
+                    );
+
+                    child.header_mut().len = (prefix_len + node_prefix_len) as u32;
+                }
+            }
+
+            mem::forget(node);
+            *self = child;
+        }
+    }
+
     /// compare the keys from depth to header.len
     fn prefix_match(keys: &[u8], node: &dyn NodeOps<V>, depth: usize) -> Result<(), usize> {
         let header = node.header();
@@ -1195,12 +1258,13 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
             depth += node.header().len as usize;
 
             if let Some(node) = node.lookup_mut(keys[depth]) {
-                // println!("{:?}, key: {}", node, keys[depth]);
+                // println!("{:?}, key: {}, {}", node, keys[depth], depth);
 
                 if node.node_type() == NodeType::Value {
                     if *node.deref().right().unwrap().key == keys {
                         break;
                     } else {
+                        // println!("dismatched key");
                         return Err(());
                     }
                 }
@@ -1209,38 +1273,40 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                 parent = Some(current);
                 current = NonNull::new(node).unwrap();
             } else {
+                // println!("fail to lookup");
                 return Err(());
             }
         }
 
-        let current = unsafe { current.as_mut() };
-        let current_ref = current.deref_mut().left().unwrap();
-        let node = current_ref.remove(keys[depth]);
+        let current_ref = unsafe { current.as_mut() };
+        let current_node = current_ref.deref_mut().left().unwrap();
+        let node = current_node.remove(keys[depth]);
         debug_assert!(node.is_ok());
         let node = node.unwrap().inner::<NodeV<V>>();
 
-        if current_ref.size() == 1 {
-            // path compression
-            todo!()
-        }
+        let current_ref = unsafe { current.as_mut() };
+        current_ref.compress_path();
 
-        if let Some(mut parent) = parent {
-            if current_ref.size() == 0 {
-                // remove the node
-                // println!("empty");
-                let parent = unsafe { parent.as_mut() };
-                let parent_ref = parent.deref_mut().left().unwrap();
+        if let Either::Left(current_node) = current_ref.deref_mut() {
+            if let Some(mut parent) = parent {
+                if current_node.size() == 0 {
+                    // remove the node
+                    // println!("empty");
+                    let parent = unsafe { parent.as_mut() };
+                    let parent_ref = parent.deref_mut().left().unwrap();
 
-                let remove = parent_ref.remove(keys[depth - current_ref.header().len as usize - 1]);
-                debug_assert!(remove.is_ok());
-                let remove = remove.unwrap();
-                debug_assert_eq!(remove.deref().left().unwrap().size(), 0);
-                debug_assert_eq!(remove.node_type(), NodeType::Node4);
-                remove.inner::<Node4<V>>();
-            } else if current_ref.is_shrinkable() {
-                // shrink the node
-                // println!("shrinkable");
-                current.shrink();
+                    let remove =
+                        parent_ref.remove(keys[depth - current_node.header().len as usize - 1]);
+                    debug_assert!(remove.is_ok());
+                    let remove = remove.unwrap();
+                    debug_assert_eq!(remove.deref().left().unwrap().size(), 0);
+                    debug_assert_eq!(remove.node_type(), NodeType::Node4);
+                    remove.inner::<Node4<V>>();
+                } else if current_node.is_shrinkable() {
+                    // shrink the node
+                    // println!("shrinkable");
+                    current_ref.shrink();
+                }
             }
         }
 
