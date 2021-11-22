@@ -2,7 +2,6 @@ use std::{
     cmp::Ordering,
     marker::PhantomData,
     mem,
-    ops::Add,
     ptr::{self, NonNull},
 };
 
@@ -50,6 +49,7 @@ impl Default for NodeHeader {
 /// This is used for bitflag on child pointer.
 const NODETYPE_MASK: usize = 0b111;
 #[repr(usize)]
+#[derive(Debug, PartialEq)]
 enum NodeType {
     Value = 0b000,
     Node4 = 0b001,
@@ -61,6 +61,7 @@ enum NodeType {
 trait NodeOps<V> {
     fn header(&self) -> &NodeHeader;
     fn header_mut(&mut self) -> &mut NodeHeader;
+    fn is_empty(&self) -> bool;
     fn is_full(&self) -> bool;
     fn is_shrinkable(&self) -> bool;
     fn get_any_child(&self) -> Option<NodeV<V>>;
@@ -122,6 +123,16 @@ impl<V> Node<V> {
                 NodeType::Node48 => Either::Left(&mut *(pointer as *mut Node48<V>)),
                 NodeType::Node256 => Either::Left(&mut *(pointer as *mut Node256<V>)),
             }
+        }
+    }
+
+    fn inner<T>(self) -> Box<T> {
+        // TODO: how to improve this function safely(self.node_type() == T::node_type())
+        unsafe {
+            let pointer = self.pointer & !NODETYPE_MASK;
+            // let tag = mem::transmute(self.pointer & NODETYPE_MASK);
+
+            Box::from_raw(pointer as *mut T)
         }
     }
 
@@ -238,14 +249,14 @@ impl<V> Node<V> {
             // check strictly by using leaf node
             let any_child = node.get_any_child().unwrap();
 
-            let mut depth = depth + PREFIX_LEN;
+            let mut d = depth + PREFIX_LEN;
 
-            while depth < depth + header.len as usize {
-                if keys[depth] != any_child.key[depth] {
-                    return Err(depth);
+            while d < depth + header.len as usize {
+                if keys[d] != any_child.key[d] {
+                    return Err(d);
                 }
 
-                depth += 1;
+                d += 1;
             }
         }
 
@@ -348,22 +359,22 @@ impl<V> Node4<V> {
 }
 
 impl<V> NodeOps<V> for Node4<V> {
-    #[inline]
     fn header(&self) -> &NodeHeader {
         &self.header
     }
 
-    #[inline]
     fn header_mut(&mut self) -> &mut NodeHeader {
         &mut self.header
     }
 
-    #[inline]
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     fn is_full(&self) -> bool {
         self.len == 4
     }
 
-    #[inline]
     fn is_shrinkable(&self) -> bool {
         false
     }
@@ -440,8 +451,9 @@ impl<V> NodeOps<V> for Node4<V> {
             match key.cmp(k) {
                 Ordering::Less => {}
                 Ordering::Equal => unsafe {
+                    let _ = slice_remove(self.mut_keys(), index);
+                    let node = slice_remove(self.mut_children(), index);
                     self.len -= 1;
-                    let node = mem::replace(self.children.get_unchecked_mut(index), Node::null());
                     return Ok(node);
                 },
                 Ordering::Greater => {}
@@ -548,22 +560,22 @@ impl<V> Node16<V> {
 }
 
 impl<V> NodeOps<V> for Node16<V> {
-    #[inline]
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     fn header(&self) -> &NodeHeader {
         &self.header
     }
 
-    #[inline]
     fn header_mut(&mut self) -> &mut NodeHeader {
         &mut self.header
     }
 
-    #[inline]
     fn is_full(&self) -> bool {
         self.len == 16
     }
 
-    #[inline]
     fn is_shrinkable(&self) -> bool {
         self.len <= 4
     }
@@ -640,8 +652,9 @@ impl<V> NodeOps<V> for Node16<V> {
             match key.cmp(k) {
                 Ordering::Less => {}
                 Ordering::Equal => unsafe {
+                    let _ = slice_remove(self.mut_keys(), index);
+                    let node = slice_remove(self.mut_children(), index);
                     self.len -= 1;
-                    let node = mem::replace(self.children.get_unchecked_mut(index), Node::null());
                     return Ok(node);
                 },
                 Ordering::Greater => {}
@@ -749,22 +762,22 @@ impl<V> Node48<V> {
 }
 
 impl<V> NodeOps<V> for Node48<V> {
-    #[inline]
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     fn header(&self) -> &NodeHeader {
         &self.header
     }
 
-    #[inline]
     fn header_mut(&mut self) -> &mut NodeHeader {
         &mut self.header
     }
 
-    #[inline]
     fn is_full(&self) -> bool {
         self.len == 48
     }
 
-    #[inline]
     fn is_shrinkable(&self) -> bool {
         self.len <= 16
     }
@@ -896,22 +909,22 @@ impl<V> From<Node48<V>> for Node256<V> {
 }
 
 impl<V> NodeOps<V> for Node256<V> {
-    #[inline]
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     fn header(&self) -> &NodeHeader {
         &self.header
     }
 
-    #[inline]
     fn header_mut(&mut self) -> &mut NodeHeader {
         &mut self.header
     }
 
-    #[inline]
     fn is_full(&self) -> bool {
         self.len == 256
     }
 
-    #[inline]
     fn is_shrinkable(&self) -> bool {
         self.len <= 48
     }
@@ -1159,6 +1172,62 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
     }
 
     fn remove(&mut self, key: &K) -> Result<V, ()> {
-        todo!()
+        let keys = key.encode();
+        let mut depth = 0;
+
+        let mut parent = None;
+        let mut current = NonNull::new(&mut self.root).unwrap();
+
+        while depth < keys.len() {
+            let current_ref = unsafe { current.as_mut() };
+            let node = current_ref.deref_mut().unwrap_left();
+            depth += node.header().len as usize;
+
+            if let Some(node) = node.lookup_mut(keys[depth]) {
+                // println!("{:?}, key: {}", node, keys[depth]);
+
+                if node.node_type() == NodeType::Value {
+                    if *node.deref().right().unwrap().key == keys {
+                        break;
+                    } else {
+                        return Err(());
+                    }
+                }
+
+                depth += 1;
+                parent = Some(current);
+                current = NonNull::new(node).unwrap();
+            } else {
+                return Err(());
+            }
+        }
+
+        let current = unsafe { current.as_mut() };
+        let current_ref = current.deref_mut().left().unwrap();
+        let node = current_ref.remove(keys[depth]);
+        debug_assert!(node.is_ok());
+        let node = node.unwrap().inner::<NodeV<V>>();
+
+        if let Some(mut parent) = parent {
+            if current_ref.is_empty() {
+                // remove the node
+                // println!("empty");
+                let parent = unsafe { parent.as_mut() };
+                let parent_ref = parent.deref_mut().left().unwrap();
+
+                let remove = parent_ref.remove(keys[depth - current_ref.header().len as usize - 1]);
+                debug_assert!(remove.is_ok());
+                let remove = remove.unwrap();
+                debug_assert!(remove.deref().left().unwrap().is_empty());
+                debug_assert_eq!(remove.node_type(), NodeType::Node4);
+                remove.inner::<Node4<V>>();
+            } else if current_ref.is_shrinkable() {
+                // shrink the node
+                // println!("shrinkable");
+                current.shrink();
+            }
+        }
+
+        Ok(node.value)
     }
 }
