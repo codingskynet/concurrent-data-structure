@@ -1,5 +1,5 @@
 use std::{
-    cmp::Ordering,
+    cmp::{min, Ordering},
     marker::PhantomData,
     mem,
     ptr::{self, NonNull},
@@ -61,7 +61,7 @@ enum NodeType {
 trait NodeOps<V> {
     fn header(&self) -> &NodeHeader;
     fn header_mut(&mut self) -> &mut NodeHeader;
-    fn is_empty(&self) -> bool;
+    fn size(&self) -> usize;
     fn is_full(&self) -> bool;
     fn is_shrinkable(&self) -> bool;
     fn get_any_child(&self) -> Option<NodeV<V>>;
@@ -367,8 +367,8 @@ impl<V> NodeOps<V> for Node4<V> {
         &mut self.header
     }
 
-    fn is_empty(&self) -> bool {
-        self.len == 0
+    fn size(&self) -> usize {
+        self.len
     }
 
     fn is_full(&self) -> bool {
@@ -560,16 +560,16 @@ impl<V> Node16<V> {
 }
 
 impl<V> NodeOps<V> for Node16<V> {
-    fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
     fn header(&self) -> &NodeHeader {
         &self.header
     }
 
     fn header_mut(&mut self) -> &mut NodeHeader {
         &mut self.header
+    }
+
+    fn size(&self) -> usize {
+        self.len
     }
 
     fn is_full(&self) -> bool {
@@ -762,16 +762,16 @@ impl<V> Node48<V> {
 }
 
 impl<V> NodeOps<V> for Node48<V> {
-    fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
     fn header(&self) -> &NodeHeader {
         &self.header
     }
 
     fn header_mut(&mut self) -> &mut NodeHeader {
         &mut self.header
+    }
+
+    fn size(&self) -> usize {
+        self.len
     }
 
     fn is_full(&self) -> bool {
@@ -909,16 +909,16 @@ impl<V> From<Node48<V>> for Node256<V> {
 }
 
 impl<V> NodeOps<V> for Node256<V> {
-    fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
     fn header(&self) -> &NodeHeader {
         &self.header
     }
 
     fn header_mut(&mut self) -> &mut NodeHeader {
         &mut self.header
+    }
+
+    fn size(&self) -> usize {
+        self.len
     }
 
     fn is_full(&self) -> bool {
@@ -1033,16 +1033,18 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
             let node = left_or!(current_ref.deref_mut(), break);
 
             if let Err(common_depth) = Node::prefix_match(&keys, node, depth) {
+                // println!("same common prefix");
                 common_prefix = (common_depth - depth) as u32;
                 break;
             }
 
             let prefix = node.header().len;
 
-            if let Some(node) = node.lookup_mut(keys[depth]) {
+            if let Some(node) = node.lookup_mut(keys[depth + prefix as usize]) {
                 depth += 1 + prefix as usize;
                 current = NonNull::new(node).unwrap();
             } else {
+                // println!("cannot find {} on {:?}", keys[depth], current_ref);
                 common_prefix = prefix;
                 break;
             }
@@ -1050,6 +1052,8 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
 
         let current_ref = unsafe { current.as_mut() };
         current_ref.extend();
+
+        // println!("current: {:?}", current_ref);
 
         match current_ref.deref_mut() {
             Either::Left(node) => {
@@ -1108,32 +1112,39 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
 
                 // insert inter node with zero prefix
                 // ex) 'aE', 'aaE'
-                let key = keys[depth];
-
+                // println!("split with same index {}", keys[depth]);
                 let mut common_prefix = 0;
 
                 while keys[depth + common_prefix] == nodev.key[depth + common_prefix] {
                     common_prefix += 1;
                 }
 
+                // println!(
+                //     "{}, common_prefix: {}, {}",
+                //     depth,
+                //     common_prefix,
+                //     nodev.key[depth + common_prefix]
+                // );
+
                 let mut inter_node = Node4::<V>::default();
                 unsafe {
                     ptr::copy_nonoverlapping(
                         keys.as_ptr().add(depth),
                         inter_node.header.prefix.as_mut_ptr(),
-                        common_prefix,
+                        min(common_prefix, PREFIX_LEN),
                     );
                 }
-                inter_node.header.len = common_prefix as u32;
+                inter_node.header.len = min(common_prefix, PREFIX_LEN) as u32;
 
                 let current = unsafe { current.as_mut() };
                 let old = mem::replace(current, Node::new(inter_node, NodeType::Node4));
 
                 let current = current.deref_mut().left().unwrap();
 
-                let insert_old = current.insert(nodev.key[depth], old);
+                let insert_old = current.insert(nodev.key[depth + common_prefix], old);
                 debug_assert!(insert_old.is_ok());
-                let insert_new = current.insert(key, Node::new(new, NodeType::Value));
+                let insert_new =
+                    current.insert(keys[depth + common_prefix], Node::new(new, NodeType::Value));
                 debug_assert!(insert_new.is_ok());
 
                 Ok(())
@@ -1208,8 +1219,13 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
         debug_assert!(node.is_ok());
         let node = node.unwrap().inner::<NodeV<V>>();
 
+        if current_ref.size() == 1 {
+            // path compression
+            todo!()
+        }
+
         if let Some(mut parent) = parent {
-            if current_ref.is_empty() {
+            if current_ref.size() == 0 {
                 // remove the node
                 // println!("empty");
                 let parent = unsafe { parent.as_mut() };
@@ -1218,7 +1234,7 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                 let remove = parent_ref.remove(keys[depth - current_ref.header().len as usize - 1]);
                 debug_assert!(remove.is_ok());
                 let remove = remove.unwrap();
-                debug_assert!(remove.deref().left().unwrap().is_empty());
+                debug_assert_eq!(remove.deref().left().unwrap().size(), 0);
                 debug_assert_eq!(remove.node_type(), NodeType::Node4);
                 remove.inner::<Node4<V>>();
             } else if current_ref.is_shrinkable() {
