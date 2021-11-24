@@ -76,10 +76,5 @@ fn test_split_key_insert_art() {
 
 #[test]
 fn stress_art() {
-    stress_sequential::<String, ART<_, _>>(100_000);
-}
-
-#[test]
-fn test_fuzz_case_art() {
-
+    stress_sequential::<String, ART<_, _>>(1_000_000);
 }

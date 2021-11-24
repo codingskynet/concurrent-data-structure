@@ -174,6 +174,8 @@ impl<V> Node<V> {
         let node_type = self.node_type();
         let node = self.deref_mut().left().unwrap();
 
+        println!("EXTEND!: {:?}", node_type);
+
         match node_type {
             NodeType::Value => unreachable!(),
             NodeType::Node4 => unsafe {
@@ -208,23 +210,25 @@ impl<V> Node<V> {
         let node_type = self.node_type();
         let node = self.deref_mut().left().unwrap();
 
+        println!("SHRINK!: {:?}", node_type);
+
         match node_type {
             NodeType::Value => unreachable!(),
             NodeType::Node4 => {}
             NodeType::Node16 => unsafe {
                 let node = node as *const dyn NodeOps<V> as *const Node16<V>;
                 let new = Box::new(Node4::from(ptr::read(node)));
-                self.pointer = Box::into_raw(new) as usize | node_type as usize;
+                self.pointer = Box::into_raw(new) as usize | NodeType::Node4 as usize;
             },
             NodeType::Node48 => unsafe {
                 let node = node as *const dyn NodeOps<V> as *const Node48<V>;
                 let new = Box::new(Node16::from(ptr::read(node)));
-                self.pointer = Box::into_raw(new) as usize | node_type as usize;
+                self.pointer = Box::into_raw(new) as usize | NodeType::Node16 as usize;
             },
             NodeType::Node256 => unsafe {
                 let node = node as *const dyn NodeOps<V> as *const Node256<V>;
                 let new = Box::new(Node48::from(ptr::read(node)));
-                self.pointer = Box::into_raw(new) as usize | node_type as usize;
+                self.pointer = Box::into_raw(new) as usize | NodeType::Node48 as usize;
             },
         }
     }
@@ -382,6 +386,9 @@ impl<V> From<Node16<V>> for Node4<V> {
     fn from(node: Node16<V>) -> Self {
         debug_assert!(node.len <= 4);
 
+        // println!("from Node16: {:?}", node);
+
+
         let mut new = Self::default();
         new.header = node.header;
         new.len = node.len;
@@ -394,6 +401,8 @@ impl<V> From<Node16<V>> for Node4<V> {
                 node.len as usize,
             );
         }
+
+        // println!("to Node4: {:?}", new);
 
         new
     }
@@ -599,6 +608,8 @@ impl<V> From<Node48<V>> for Node16<V> {
                     i += 1;
                 }
             }
+
+            debug_assert!(i <= 16);
         }
 
         new
@@ -1361,7 +1372,7 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
             if let Some(mut parent) = parent {
                 if current_node.size() == 0 {
                     // remove the node
-                    // println!("empty");
+                    println!("empty");
                     let parent = unsafe { parent.as_mut() };
                     let parent_ref = parent.deref_mut().left().unwrap();
 
@@ -1374,7 +1385,7 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                     remove.inner::<Node4<V>>();
                 } else if current_node.is_shrinkable() {
                     // shrink the node
-                    // println!("shrinkable");
+                    println!("shrinkable");
                     current_ref.shrink();
                 }
             }

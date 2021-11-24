@@ -58,6 +58,8 @@ where
     let mut rng = thread_rng();
 
     for i in 1..=iter {
+        let before = format!("{:?}", map);
+
         let t = types.choose(&mut rng).unwrap();
         let ref_map_keys = ref_map.keys().collect::<Vec<&K>>();
         let existing_key = ref_map_keys.choose(&mut rng);
@@ -121,8 +123,6 @@ where
                 }
                 Operation::Remove => {
                     // should success
-                    println!("{:?}", map);
-
                     let value = ref_map.remove(&existing_key);
 
                     println!(
@@ -132,13 +132,16 @@ where
                         value.unwrap()
                     );
                     assert_eq!(map.remove(&existing_key).ok(), value);
-
-                    // early stop code if the remove has any problems
-                    println!("{:?}", map);
-                    for key in ref_map.keys().collect::<Vec<&K>>() {
-                        assert_eq!(map.lookup(key).is_some(), true, "the key {:?} is not found.", key);
-                    }
                 }
+            }
+        }
+
+        // early stop code if the op has any problems
+        for key in ref_map.keys().collect::<Vec<&K>>() {
+            if map.lookup(key).is_none() {
+                println!("before: {}", before);
+                println!("after: {:?}", map);
+                panic!("the key {:?} is not found.", key);
             }
         }
     }
