@@ -1,6 +1,8 @@
 use cds::art::ART;
 use cds::map::SequentialMap;
 
+use crate::util::map::stress_sequential;
+
 #[test]
 fn test_art() {
     let mut art: ART<String, usize> = ART::new();
@@ -70,4 +72,14 @@ fn test_split_key_insert_art() {
     assert_eq!(art.remove(&"123456789012345678901234567890".to_string()), Ok(3));
     assert_eq!(art.remove(&"12345678901234567890".to_string()), Ok(2));
     assert_eq!(art.remove(&"1234567890".to_string()), Ok(1));
+}
+
+#[test]
+fn stress_art() {
+    stress_sequential::<String, ART<_, _>>(100_000);
+}
+
+#[test]
+fn test_fuzz_case_art() {
+
 }

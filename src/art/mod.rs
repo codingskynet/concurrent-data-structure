@@ -1229,7 +1229,7 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                 Ok(())
             }
             Either::Right(nodev) => {
-                if depth == keys.len() {
+                if *nodev.key == keys {
                     return Err(value);
                 }
 
@@ -1238,8 +1238,6 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                 // insert inter node with zero prefix
                 // ex) 'aE', 'aaE'
                 // println!("split with same index {}", keys[depth]);
-
-
                 let mut common_prefix = 0;
 
                 while keys[depth + common_prefix] == nodev.key[depth + common_prefix] {
@@ -1289,6 +1287,10 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
             let node = left_or!(current.deref(), break);
             depth += node.header().len as usize;
 
+            if depth >= keys.len() {
+                return None;
+            }
+
             if let Some(node) = node.lookup(keys[depth]) {
                 depth += 1;
                 current = node;
@@ -1320,6 +1322,10 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
             let current_ref = unsafe { current.as_mut() };
             let node = current_ref.deref_mut().unwrap_left();
             depth += node.header().len as usize;
+
+            if depth >= keys.len() {
+                return Err(());
+            }
 
             if let Some(node) = node.lookup_mut(keys[depth]) {
                 // println!("{:?}, key: {}, {}", node, keys[depth], depth);
