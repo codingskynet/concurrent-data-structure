@@ -27,7 +27,7 @@ impl Debug for NodeHeader {
         unsafe {
             f.debug_struct("NodeHeader")
                 .field("len", &self.len)
-                .field("prefix", &self.prefix.get_unchecked(..self.len as usize))
+                .field("prefix", &self.prefix.get_unchecked(..min(PREFIX_LEN, self.len as usize)))
                 .finish()
         }
     }
@@ -64,7 +64,7 @@ trait NodeOps<V> {
     fn size(&self) -> usize;
     fn is_full(&self) -> bool;
     fn is_shrinkable(&self) -> bool;
-    fn get_any_child(&self) -> Option<NodeV<V>>;
+    fn get_any_child(&self) -> Option<&NodeV<V>>;
     fn insert(&mut self, key: u8, node: Node<V>) -> Result<(), Node<V>>;
     fn lookup(&self, key: u8) -> Option<&Node<V>>;
     fn lookup_mut(&mut self, key: u8) -> Option<&mut Node<V>>;
@@ -231,19 +231,15 @@ impl<V> Node<V> {
 
     /// compress path if the node is Node4 with having one child
     fn compress_path(&mut self) {
-        if self.deref().is_right() {
-            return;
-        }
-
         if self.node_type() != NodeType::Node4 {
             return;
         }
 
-        unsafe {
-            if self.deref().left().unwrap().size() != 1 {
-                return;
-            }
+        if self.deref().left().unwrap().size() != 1 {
+            return;
+        }
 
+        unsafe {
             let node = Box::from_raw((self.pointer & !NODETYPE_MASK) as *mut Node4<V>);
 
             let child_key = *node.keys.get_unchecked(0);
@@ -299,7 +295,7 @@ impl<V> Node<V> {
         for (index, prefix) in unsafe {
             header
                 .prefix
-                .get_unchecked(..header.len as usize)
+                .get_unchecked(..min(PREFIX_LEN, header.len as usize))
                 .iter()
                 .enumerate()
         } {
@@ -442,8 +438,13 @@ impl<V> NodeOps<V> for Node4<V> {
         false
     }
 
-    fn get_any_child(&self) -> Option<NodeV<V>> {
-        todo!()
+    fn get_any_child(&self) -> Option<&NodeV<V>> {
+        debug_assert!(self.size() > 0);
+
+        match unsafe { self.children.get_unchecked(0).deref() } {
+            Either::Left(node) => node.get_any_child(),
+            Either::Right(nodev) => return Some(nodev),
+        }
     }
 
     fn insert(&mut self, key: u8, node: Node<V>) -> Result<(), Node<V>> {
@@ -643,8 +644,13 @@ impl<V> NodeOps<V> for Node16<V> {
         self.len <= 4
     }
 
-    fn get_any_child(&self) -> Option<NodeV<V>> {
-        todo!()
+    fn get_any_child(&self) -> Option<&NodeV<V>> {
+        debug_assert!(self.size() > 0);
+
+        match unsafe { self.children.get_unchecked(0).deref() } {
+            Either::Left(node) => node.get_any_child(),
+            Either::Right(nodev) => Some(nodev),
+        }
     }
 
     fn insert(&mut self, key: u8, node: Node<V>) -> Result<(), Node<V>> {
@@ -845,8 +851,13 @@ impl<V> NodeOps<V> for Node48<V> {
         self.len <= 16
     }
 
-    fn get_any_child(&self) -> Option<NodeV<V>> {
-        todo!()
+    fn get_any_child(&self) -> Option<&NodeV<V>> {
+        debug_assert!(self.size() > 0);
+
+        match unsafe { self.children.get_unchecked(0).deref() } {
+            Either::Left(node) => node.get_any_child(),
+            Either::Right(nodev) => Some(nodev),
+        }
     }
 
     fn insert(&mut self, key: u8, node: Node<V>) -> Result<(), Node<V>> {
@@ -992,8 +1003,19 @@ impl<V> NodeOps<V> for Node256<V> {
         self.len <= 48
     }
 
-    fn get_any_child(&self) -> Option<NodeV<V>> {
-        todo!()
+    fn get_any_child(&self) -> Option<&NodeV<V>> {
+        debug_assert!(self.size() > 0);
+
+        for child in self.children.iter() {
+            if !child.is_null() {
+                return match child.deref() {
+                    Either::Left(node) => node.get_any_child(),
+                    Either::Right(nodev) => Some(nodev),
+                };
+            }
+        }
+
+        unreachable!()
     }
 
     fn insert(&mut self, key: u8, node: Node<V>) -> Result<(), Node<V>> {
@@ -1120,16 +1142,26 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
 
         match current_ref.deref_mut() {
             Either::Left(node) => {
-                let key = keys[depth];
                 let new = NodeV::new(keys.clone(), value);
 
                 if common_prefix == node.header().len {
                     // just insert value into this node
+                    let key = keys[depth];
                     let insert = node.insert(key, Node::new(new, NodeType::Value));
                     debug_assert!(insert.is_ok());
                 } else {
+                    drop(node);
+
                     // split prefix
+                    let key = keys[depth + common_prefix as usize];
                     let mut inter_node = Node4::<V>::default();
+
+                    // println!(
+                    //     "split prefix: {}, {:?}, {}",
+                    //     common_prefix,
+                    //     keys.get(depth..(depth + common_prefix as usize)),
+                    //     key
+                    // );
 
                     unsafe {
                         ptr::copy_nonoverlapping(
@@ -1138,27 +1170,57 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                             common_prefix as usize,
                         );
                     }
-
                     inter_node.header.len = common_prefix;
 
-                    // re-set the old's prefix
-                    let header = node.header_mut();
-                    let prefix = header.prefix.clone();
-                    unsafe {
-                        ptr::copy_nonoverlapping(
-                            prefix.as_ptr(),
-                            header.prefix.as_mut_ptr(),
-                            (header.len - common_prefix) as usize,
-                        )
-                    };
-                    header.len = header.len - common_prefix;
-
+                    // replace with inter_node and get old node
                     let current = unsafe { current.as_mut() };
                     let old = mem::replace(current, Node::new(inter_node, NodeType::Node4));
                     let current = current.deref_mut().left().unwrap();
 
-                    let insert_old =
-                        current.insert(node.header().prefix[depth + common_prefix as usize], old);
+                    // get old's key and re-set the old's prefix
+                    let old_ref = old.deref_mut().left().unwrap();
+                    let header = old_ref.header();
+
+                    let old_key;
+
+                    if header.len > PREFIX_LEN as u32 {
+                        // need to get omitted prefix from any child
+                        // println!("big long prefix");
+
+                        let prefix = old_ref.get_any_child().unwrap().key.clone();
+                        let prefix_start = depth + common_prefix as usize + 1;
+
+                        let header = old_ref.header_mut();
+                        unsafe {
+                            ptr::copy_nonoverlapping(
+                                prefix.as_ptr().add(prefix_start),
+                                header.prefix.as_mut_ptr(),
+                                min(PREFIX_LEN, header.len as usize - (common_prefix + 1) as usize),
+                            )
+                        };
+                        header.len -= common_prefix + 1;
+
+                        old_key = unsafe { *prefix.get_unchecked(depth + common_prefix as usize) };
+                    } else {
+                        // just move prefix
+                        // println!("just move prefix");
+
+                        old_key = unsafe { *header.prefix.get_unchecked(common_prefix as usize) };
+
+                        let header = old_ref.header_mut();
+                        unsafe {
+                            ptr::copy(
+                                header.prefix.as_ptr().add(common_prefix as usize + 1),
+                                header.prefix.as_mut_ptr(),
+                                (header.len - (common_prefix + 1)) as usize,
+                            )
+                        };
+                        header.len -= common_prefix + 1;
+                    }
+
+                    // println!("old key: {}", old_key);
+
+                    let insert_old = current.insert(old_key, old);
                     debug_assert!(insert_old.is_ok());
                     let insert_new = current.insert(key, Node::new(new, NodeType::Value));
                     debug_assert!(insert_new.is_ok());
@@ -1176,6 +1238,8 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                 // insert inter node with zero prefix
                 // ex) 'aE', 'aaE'
                 // println!("split with same index {}", keys[depth]);
+
+
                 let mut common_prefix = 0;
 
                 while keys[depth + common_prefix] == nodev.key[depth + common_prefix] {
@@ -1194,10 +1258,10 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                     ptr::copy_nonoverlapping(
                         keys.as_ptr().add(depth),
                         inter_node.header.prefix.as_mut_ptr(),
-                        min(common_prefix, PREFIX_LEN),
+                        min(PREFIX_LEN, common_prefix),
                     );
                 }
-                inter_node.header.len = min(common_prefix, PREFIX_LEN) as u32;
+                inter_node.header.len = common_prefix as u32;
 
                 let current = unsafe { current.as_mut() };
                 let old = mem::replace(current, Node::new(inter_node, NodeType::Node4));

@@ -1,5 +1,4 @@
 use std::ptr;
-use either::Either;
 
 pub mod random;
 

@@ -46,3 +46,28 @@ fn test_large_key_art() {
     assert_eq!(art.remove(&"12345678901234567890123456789012345678901234567890".to_string()), Ok(5));
     assert_eq!(art.remove(&"123456789012345678901234567890123456789012345678901234567890".to_string()), Ok(6));
 }
+
+#[test]
+fn test_split_key_insert_art() {
+    let mut art: ART<String, usize> = ART::new();
+    assert_eq!(art.insert(&"123456789012345678901234567890123456789012345678901234567890".to_string(), 6), Ok(()));
+    assert_eq!(art.insert(&"12345678901234567890123456789012345678901234567890".to_string(), 5), Ok(()));
+    assert_eq!(art.lookup(&"12345678901234567890123456789012345678901234567890".to_string()), Some(&5));
+    assert_eq!(art.lookup(&"123456789012345678901234567890123456789012345678901234567890".to_string()), Some(&6));
+    assert_eq!(art.insert(&"1234567890123456789012345678901234567890".to_string(), 4), Ok(()));
+    assert_eq!(art.insert(&"123456789012345678901234567890".to_string(), 3), Ok(()));
+    assert_eq!(art.insert(&"12345678901234567890".to_string(), 2), Ok(()));
+    assert_eq!(art.insert(&"1234567890".to_string(), 1), Ok(()));
+    assert_eq!(art.lookup(&"1234567890".to_string()), Some(&1));
+    assert_eq!(art.lookup(&"12345678901234567890".to_string()), Some(&2));
+    assert_eq!(art.lookup(&"123456789012345678901234567890".to_string()), Some(&3));
+    assert_eq!(art.lookup(&"1234567890123456789012345678901234567890".to_string()), Some(&4));
+    assert_eq!(art.lookup(&"12345678901234567890123456789012345678901234567890".to_string()), Some(&5));
+    assert_eq!(art.lookup(&"123456789012345678901234567890123456789012345678901234567890".to_string()), Some(&6));
+    assert_eq!(art.remove(&"123456789012345678901234567890123456789012345678901234567890".to_string()), Ok(6));
+    assert_eq!(art.remove(&"12345678901234567890123456789012345678901234567890".to_string()), Ok(5));
+    assert_eq!(art.remove(&"1234567890123456789012345678901234567890".to_string()), Ok(4));
+    assert_eq!(art.remove(&"123456789012345678901234567890".to_string()), Ok(3));
+    assert_eq!(art.remove(&"12345678901234567890".to_string()), Ok(2));
+    assert_eq!(art.remove(&"1234567890".to_string()), Ok(1));
+}
