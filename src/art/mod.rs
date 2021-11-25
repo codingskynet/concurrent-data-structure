@@ -179,8 +179,6 @@ impl<V> Node<V> {
         let node_type = self.node_type();
         let node = self.deref_mut().left().unwrap();
 
-        println!("EXTEND!: {:?}", node_type);
-
         match node_type {
             NodeType::Value => unreachable!(),
             NodeType::Node4 => unsafe {
@@ -214,8 +212,6 @@ impl<V> Node<V> {
 
         let node_type = self.node_type();
         let node = self.deref_mut().left().unwrap();
-
-        println!("SHRINK!: {:?}", node_type);
 
         match node_type {
             NodeType::Value => unreachable!(),
@@ -391,8 +387,6 @@ impl<V> From<Node16<V>> for Node4<V> {
     fn from(node: Node16<V>) -> Self {
         debug_assert!(node.len <= 4);
 
-        // println!("from Node16: {:?}", node);
-
         let mut new = Self::default();
         new.header = node.header;
         new.len = node.len;
@@ -405,8 +399,6 @@ impl<V> From<Node16<V>> for Node4<V> {
                 node.len as usize,
             );
         }
-
-        // println!("to Node4: {:?}", new);
 
         new
     }
@@ -823,18 +815,16 @@ impl<V> From<Node256<V>> for Node48<V> {
         let mut new = Self::default();
 
         unsafe {
-            // TODO: child is dropping?
             for (key, child) in node.children.iter().enumerate() {
                 if !child.is_null() {
+                    *new.keys.get_unchecked_mut(key) = new.len as u8;
+                    *new.children.get_unchecked_mut(new.len) = ptr::read(child);
                     new.len += 1;
-                    *new.keys.get_unchecked_mut(key) = (new.len - 1) as u8;
-                    *new.children.get_unchecked_mut(new.len - 1) = ptr::read(child);
                 }
             }
         }
 
         new.header = node.header;
-        new.len = node.len;
 
         new
     }
@@ -879,7 +869,7 @@ impl<V> NodeOps<V> for Node48<V> {
             Err(node)
         } else {
             for (idx, child) in self.children.iter_mut().enumerate() {
-                if !child.is_null() {
+                if child.is_null() {
                     *child = node;
                     *index = idx as u8;
                     self.len += 1;
@@ -1038,6 +1028,7 @@ impl<V> NodeOps<V> for Node256<V> {
         let child = unsafe { self.children.get_unchecked_mut(key as usize) };
 
         if child.is_null() {
+            self.len += 1;
             *child = node;
             Ok(())
         } else {
@@ -1083,6 +1074,7 @@ impl<V> NodeOps<V> for Node256<V> {
             Err(())
         } else {
             let node = mem::replace(child, Node::null());
+            self.len -= 1;
             Ok(node)
         }
     }
@@ -1134,7 +1126,7 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
             let node = left_or!(current_ref.deref_mut(), break);
 
             if let Err(common_depth) = Node::prefix_match(&keys, node, depth) {
-                println!("same common prefix");
+                // println!("same common prefix");
                 common_prefix = (common_depth - depth) as u32;
                 break;
             }
@@ -1162,7 +1154,7 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
 
                 if common_prefix == node.header().len {
                     // just insert value into this node
-                    println!("just insert");
+                    // println!("just insert");
                     let key = keys[depth + common_prefix as usize];
                     let insert = node.insert(key, Node::new(new, NodeType::Value));
                     debug_assert!(insert.is_ok());
@@ -1203,7 +1195,7 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
 
                     if header.len > PREFIX_LEN as u32 {
                         // need to get omitted prefix from any child
-                        println!("big long prefix");
+                        // println!("big long prefix");
 
                         let prefix = old_ref.get_any_child().unwrap().key.clone();
                         let prefix_start = depth + common_prefix as usize + 1;
@@ -1224,7 +1216,7 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                         old_key = unsafe { *prefix.get_unchecked(depth + common_prefix as usize) };
                     } else {
                         // just move prefix
-                        println!("just move prefix");
+                        // println!("just move prefix");
 
                         old_key = unsafe { *header.prefix.get_unchecked(common_prefix as usize) };
 
@@ -1239,7 +1231,7 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                         header.len -= common_prefix + 1;
                     }
 
-                    println!("old key: {}", old_key);
+                    // println!("old key: {}", old_key);
 
                     let insert_old = current.insert(old_key, old);
                     debug_assert!(insert_old.is_ok());
@@ -1258,7 +1250,7 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
 
                 // insert inter node with zero prefix
                 // ex) 'aE', 'aaE'
-                println!("split with same index {}", keys[depth]);
+                // println!("split with same index {}", keys[depth]);
                 let mut common_prefix = 0;
 
                 while keys[depth + common_prefix] == nodev.key[depth + common_prefix] {
@@ -1382,7 +1374,7 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
             if let Some(mut parent) = parent {
                 if current_node.size() == 0 {
                     // remove the node
-                    println!("empty");
+                    // println!("empty");
                     let parent = unsafe { parent.as_mut() };
                     let parent_ref = parent.deref_mut().left().unwrap();
 
@@ -1395,7 +1387,7 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                     remove.inner::<Node4<V>>();
                 } else if current_node.is_shrinkable() {
                     // shrink the node
-                    println!("shrinkable");
+                    // println!("shrinkable");
                     current_ref.shrink();
                 }
             }
