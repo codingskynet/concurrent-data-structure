@@ -1103,7 +1103,49 @@ impl<K, V: Debug> Debug for ART<K, V> {
     }
 }
 
-impl<K, V> ART<K, V> {}
+impl<K, V> Drop for ART<K, V> {
+    fn drop(&mut self) {
+        fn clean<V>(node: &Node<V>) {
+            match node.node_type() {
+                NodeType::Value => unsafe { drop(ptr::read(node).inner::<NodeV<V>>())},
+                NodeType::Node4 => {
+                    let node4 = unsafe { ptr::read(node).inner::<Node4<V>>() };
+
+                    for child in node4.children() {
+                        clean(child);
+                    }
+                },
+                NodeType::Node16 => {
+                    let node16 = unsafe { ptr::read(node).inner::<Node16<V>>() };
+
+                    for child in node16.children() {
+                        clean(child);
+                    }
+                },
+                NodeType::Node48 => {
+                    let node48 = unsafe { ptr::read(node).inner::<Node48<V>>() };
+
+                    for child in &node48.children {
+                        if !child.is_null() {
+                            clean(child);
+                        }
+                    }
+                },
+                NodeType::Node256 => {
+                    let node256 = unsafe { ptr::read(node).inner::<Node256<V>>() };
+
+                    for child in &node256.children {
+                        if !child.is_null() {
+                            clean(child);
+                        }
+                    }
+                },
+            }
+        }
+
+        clean(&self.root);
+    }
+}
 
 impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
     fn new() -> Self {

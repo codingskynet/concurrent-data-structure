@@ -4,7 +4,7 @@ use criterion::{criterion_main, SamplingMode, Throughput};
 
 mod util;
 
-use cds::{avltree::AVLTree, btree::BTree};
+use cds::{art::ART, avltree::AVLTree, btree::BTree};
 use criterion::{criterion_group, Criterion};
 use util::sequential::fuzz_sequential_logs;
 
@@ -23,7 +23,7 @@ const OPS_RATE: [(usize, usize, usize); 7] = [
     (50, 0, 50),
 ];
 
-fn bench_vs_btreemap(c: &mut Criterion) {
+fn bench_u64_vs_btreemap(c: &mut Criterion) {
     for (insert, lookup, remove) in OPS_RATE {
         let logs = fuzz_sequential_logs(
             200,
@@ -34,7 +34,7 @@ fn bench_vs_btreemap(c: &mut Criterion) {
         );
 
         let mut group = c.benchmark_group(format!(
-            "Inserted {:+e}, Ops (I: {}%, L: {}%, R: {}%, total: {:+e})",
+            "[u64] Inserted {:+e}, Ops (I: {}%, L: {}%, R: {}%, total: {:+e})",
             MAP_ALREADY_INSERTED, insert, lookup, remove, MAP_TOTAL_OPS
         ));
         group.measurement_time(Duration::from_secs(15)); // Note: make almost same the measurement_time to iters * avg_op_time
@@ -43,12 +43,38 @@ fn bench_vs_btreemap(c: &mut Criterion) {
         group.throughput(Throughput::Elements(MAP_TOTAL_OPS as u64));
 
         bench_logs_btreemap(logs.clone(), &mut group);
-        bench_logs_sequential_map::<BTree<_, _>>("BTree", logs.clone(), &mut group);
-        bench_logs_sequential_map::<AVLTree<_, _>>("AVLTree", logs, &mut group);
+        bench_logs_sequential_map::<u64, u64, BTree<_, _>>("BTree", logs.clone(), &mut group);
+        bench_logs_sequential_map::<u64, u64, AVLTree<_, _>>("AVLTree", logs, &mut group);
     }
 }
 
-criterion_group!(bench, bench_vs_btreemap);
+fn bench_string_vs_btreemap(c: &mut Criterion) {
+    for (insert, lookup, remove) in OPS_RATE {
+        let logs = fuzz_sequential_logs(
+            50,
+            MAP_ALREADY_INSERTED,
+            MAP_TOTAL_OPS * insert / 100,
+            MAP_TOTAL_OPS * lookup / 100,
+            MAP_TOTAL_OPS * remove / 100,
+        );
+
+        let mut group = c.benchmark_group(format!(
+            "[String] Inserted {:+e}, Ops (I: {}%, L: {}%, R: {}%, total: {:+e})",
+            MAP_ALREADY_INSERTED, insert, lookup, remove, MAP_TOTAL_OPS
+        ));
+        group.measurement_time(Duration::from_secs(15)); // Note: make almost same the measurement_time to iters * avg_op_time
+        group.sampling_mode(SamplingMode::Flat);
+        group.sample_size(10);
+        group.throughput(Throughput::Elements(MAP_TOTAL_OPS as u64));
+
+        bench_logs_btreemap(logs.clone(), &mut group);
+        bench_logs_sequential_map::<String, u64, ART<_, _>>("ART", logs.clone(), &mut group);
+        bench_logs_sequential_map::<String, u64, BTree<_, _>>("BTree", logs.clone(), &mut group);
+        bench_logs_sequential_map::<String, u64, AVLTree<_, _>>("AVLTree", logs, &mut group);
+    }
+}
+
+criterion_group!(bench, bench_string_vs_btreemap, bench_u64_vs_btreemap);
 criterion_main! {
     bench,
 }
