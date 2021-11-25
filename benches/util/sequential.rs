@@ -16,7 +16,7 @@ pub enum Op<K, V> {
 
 type Logs<K, V> = Vec<(Vec<(K, V)>, Vec<Op<K, V>>)>;
 
-pub fn fuzz_sequential_logs<K: Ord + Random, V: Random>(
+pub fn fuzz_sequential_logs<K: Ord + Clone + Random, V: Clone + Random>(
     iters: u64,
     already_inserted: u64,
     insert: usize,
@@ -39,12 +39,20 @@ pub fn fuzz_sequential_logs<K: Ord + Random, V: Random>(
             logs.push(Op::Insert(K::gen(&mut rng), V::gen(&mut rng)));
         }
 
-        for _ in 0..lookup {
-            logs.push(Op::Lookup(K::gen(&mut rng)));
+        for i in 0..lookup {
+            if i % 2 == 0 {
+                logs.push(Op::Lookup(K::gen(&mut rng)));
+            } else {
+                logs.push(Op::Lookup(pre_inserted.choose(&mut rng).cloned().unwrap().0));
+            }
         }
 
-        for _ in 0..remove {
-            logs.push(Op::Remove(K::gen(&mut rng)));
+        for i in 0..remove {
+            if i % 2 == 0 {
+                logs.push(Op::Remove(K::gen(&mut rng)));
+            } else {
+                logs.push(Op::Remove(pre_inserted.choose(&mut rng).cloned().unwrap().0));
+            }
         }
 
         logs.shuffle(&mut rng);
