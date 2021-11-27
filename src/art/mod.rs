@@ -16,7 +16,7 @@ use crate::{
 };
 
 const PREFIX_LEN: usize = 12;
-const KEY_ENDMARK: u8 = 0xff;
+const KEY_ENDMARK: u8 = 0xff; // invalid on utf-8. Thus, use it for preventing that any key cannot be the prefix of another key.
 struct NodeHeader {
     len: u32,                 // the len of prefix
     prefix: [u8; PREFIX_LEN], // prefix for path compression
@@ -235,6 +235,9 @@ impl<V> Node<V> {
     }
 
     /// compress path if the node is Node4 with having one child
+    /// If self's unique one child is not NodeV(internal node), then compress path from self.header to
+    /// self.header + self.key(of child) + child.header and set child on self.
+    /// If self's one is NodeV(external node), just set child on self.(not need to compress path on header).
     fn compress_path(&mut self) {
         if self.node_type() != NodeType::Node4 {
             return;
@@ -266,7 +269,6 @@ impl<V> Node<V> {
                 child.header_mut().len += 1;
 
                 if node.header.len > 0 {
-                    // println!("prefix move");
                     let node_prefix_len = node.header.len as usize;
                     let prefix_len = child.header().len as usize;
 
@@ -1107,21 +1109,21 @@ impl<K, V> Drop for ART<K, V> {
     fn drop(&mut self) {
         fn clean<V>(node: &Node<V>) {
             match node.node_type() {
-                NodeType::Value => unsafe { drop(ptr::read(node).inner::<NodeV<V>>())},
+                NodeType::Value => unsafe { drop(ptr::read(node).inner::<NodeV<V>>()) },
                 NodeType::Node4 => {
                     let node4 = unsafe { ptr::read(node).inner::<Node4<V>>() };
 
                     for child in node4.children() {
                         clean(child);
                     }
-                },
+                }
                 NodeType::Node16 => {
                     let node16 = unsafe { ptr::read(node).inner::<Node16<V>>() };
 
                     for child in node16.children() {
                         clean(child);
                     }
-                },
+                }
                 NodeType::Node48 => {
                     let node48 = unsafe { ptr::read(node).inner::<Node48<V>>() };
 
@@ -1130,7 +1132,7 @@ impl<K, V> Drop for ART<K, V> {
                             clean(child);
                         }
                     }
-                },
+                }
                 NodeType::Node256 => {
                     let node256 = unsafe { ptr::read(node).inner::<Node256<V>>() };
 
@@ -1139,11 +1141,24 @@ impl<K, V> Drop for ART<K, V> {
                             clean(child);
                         }
                     }
-                },
+                }
             }
         }
 
         clean(&self.root);
+    }
+}
+
+impl<K, V> ART<K, V> {
+    pub fn print_debug_info(&self) {
+        println!("V          is {:>5} byte.", mem::size_of::<V>());
+        println!("NodeV<V>   is {:>5} byte.", mem::size_of::<NodeV<V>>());
+        println!("NodeHeader is {:>5} byte.", mem::size_of::<NodeHeader>());
+        println!("Node<V>    is {:>5} byte.", mem::size_of::<Node<V>>());
+        println!("Node4<V>   is {:>5} byte.", mem::size_of::<Node4<V>>());
+        println!("Node16<V>  is {:>5} byte.", mem::size_of::<Node16<V>>());
+        println!("Node48<V>  is {:>5} byte.", mem::size_of::<Node48<V>>());
+        println!("Node256<V> is {:>5} byte.", mem::size_of::<Node256<V>>());
     }
 }
 
@@ -1168,7 +1183,6 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
             let node = left_or!(current_ref.deref_mut(), break);
 
             if let Err(common_depth) = Node::prefix_match(&keys, node, depth) {
-                // println!("same common prefix");
                 common_prefix = (common_depth - depth) as u32;
                 break;
             }
@@ -1179,7 +1193,6 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                 depth += 1 + prefix as usize;
                 current = NonNull::new(node).unwrap();
             } else {
-                // println!("cannot find {} on {:?}", keys[depth], current_ref);
                 common_prefix = prefix;
                 break;
             }
@@ -1187,8 +1200,6 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
 
         let current_ref = unsafe { current.as_mut() };
         current_ref.extend();
-
-        // println!("current: {:?}", current_ref);
 
         match current_ref.deref_mut() {
             Either::Left(node) => {
@@ -1200,20 +1211,12 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                     let key = keys[depth + common_prefix as usize];
                     let insert = node.insert(key, Node::new(new, NodeType::Value));
                     debug_assert!(insert.is_ok());
-                    // println!("result: {:?}", current_ref);
                 } else {
-                    drop(node);
+                    drop(node); // since the current(ref of node) will be changed, drop it for safety not to use it.
 
                     // split prefix
                     let key = keys[depth + common_prefix as usize];
                     let mut inter_node = Node4::<V>::default();
-
-                    // println!(
-                    //     "split prefix: {}, {:?}, {}",
-                    //     common_prefix,
-                    //     keys.get(depth..(depth + common_prefix as usize)),
-                    //     key
-                    // );
 
                     unsafe {
                         ptr::copy_nonoverlapping(
@@ -1237,15 +1240,13 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
 
                     if header.len > PREFIX_LEN as u32 {
                         // need to get omitted prefix from any child
-                        // println!("big long prefix");
-
-                        let prefix = old_ref.get_any_child().unwrap().key.clone();
+                        let full_key = old_ref.get_any_child().unwrap().key.clone();
                         let prefix_start = depth + common_prefix as usize + 1;
 
                         let header = old_ref.header_mut();
                         unsafe {
                             ptr::copy_nonoverlapping(
-                                prefix.as_ptr().add(prefix_start),
+                                full_key.as_ptr().add(prefix_start),
                                 header.prefix.as_mut_ptr(),
                                 min(
                                     PREFIX_LEN,
@@ -1255,11 +1256,10 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                         };
                         header.len -= common_prefix + 1;
 
-                        old_key = unsafe { *prefix.get_unchecked(depth + common_prefix as usize) };
+                        old_key =
+                            unsafe { *full_key.get_unchecked(depth + common_prefix as usize) };
                     } else {
                         // just move prefix
-                        // println!("just move prefix");
-
                         old_key = unsafe { *header.prefix.get_unchecked(common_prefix as usize) };
 
                         let header = old_ref.header_mut();
@@ -1272,8 +1272,6 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                         };
                         header.len -= common_prefix + 1;
                     }
-
-                    // println!("old key: {}", old_key);
 
                     let insert_old = current.insert(old_key, old);
                     debug_assert!(insert_old.is_ok());
@@ -1292,19 +1290,13 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
 
                 // insert inter node with zero prefix
                 // ex) 'aE', 'aaE'
-                // println!("split with same index {}", keys[depth]);
                 let mut common_prefix = 0;
 
                 while keys[depth + common_prefix] == nodev.key[depth + common_prefix] {
                     common_prefix += 1;
                 }
 
-                // println!(
-                //     "{}, common_prefix: {}, {}",
-                //     depth,
-                //     common_prefix,
-                //     nodev.key[depth + common_prefix]
-                // );
+                drop(nodev); // since the nodev will be changed, drop it for safety not to use it.
 
                 let mut inter_node = Node4::<V>::default();
                 unsafe {
@@ -1318,10 +1310,10 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
 
                 let current = unsafe { current.as_mut() };
                 let old = mem::replace(current, Node::new(inter_node, NodeType::Node4));
-
                 let current = current.deref_mut().left().unwrap();
 
-                let insert_old = current.insert(nodev.key[depth + common_prefix], old);
+                let old_full_key = &old.deref().right().unwrap().key;
+                let insert_old = current.insert(old_full_key[depth + common_prefix], old);
                 debug_assert!(insert_old.is_ok());
                 let insert_new =
                     current.insert(keys[depth + common_prefix], Node::new(new, NodeType::Value));
@@ -1383,13 +1375,10 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
             }
 
             if let Some(node) = node.lookup_mut(keys[depth]) {
-                // println!("{:?}, key: {}, {}", node, keys[depth], depth);
-
                 if node.node_type() == NodeType::Value {
                     if *node.deref().right().unwrap().key == keys {
                         break;
                     } else {
-                        // println!("dismatched key");
                         return Err(());
                     }
                 }
@@ -1398,7 +1387,6 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                 parent = Some(current);
                 current = NonNull::new(node).unwrap();
             } else {
-                // println!("fail to lookup");
                 return Err(());
             }
         }
@@ -1409,14 +1397,15 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
         debug_assert!(node.is_ok());
         let node = node.unwrap().inner::<NodeV<V>>();
 
+        // if it can compress path for only one child, do it.
         let current_ref = unsafe { current.as_mut() };
         current_ref.compress_path();
 
+        // if it was not removed since it had have at least one child, then
         if let Either::Left(current_node) = current_ref.deref_mut() {
             if let Some(mut parent) = parent {
                 if current_node.size() == 0 {
                     // remove the node
-                    // println!("empty");
                     let parent = unsafe { parent.as_mut() };
                     let parent_ref = parent.deref_mut().left().unwrap();
 
@@ -1429,7 +1418,6 @@ impl<K: Eq + Encodable, V: Debug> SequentialMap<K, V> for ART<K, V> {
                     remove.inner::<Node4<V>>();
                 } else if current_node.is_shrinkable() {
                     // shrink the node
-                    // println!("shrinkable");
                     current_ref.shrink();
                 }
             }

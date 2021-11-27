@@ -54,7 +54,7 @@ fn test_large_key_art() {
 
 #[test]
 #[rustfmt::skip]
-fn test_split_key_insert_art() {
+fn test_split_key_art() {
     let mut art: ART<String, usize> = ART::new();
     assert_eq!(art.insert(&"123456789012345678901234567890123456789012345678901234567890".to_string(), 6), Ok(()));
     assert_eq!(art.insert(&"12345678901234567890123456789012345678901234567890".to_string(), 5), Ok(()));
@@ -116,4 +116,10 @@ fn test_extend_shrink_art() {
 #[test]
 fn stress_art() {
     stress_sequential::<String, ART<_, _>>(1_000_000);
+}
+
+#[test]
+fn debug_art() {
+    let art: ART<String, usize> = ART::new();
+    art.print_debug_info();
 }
