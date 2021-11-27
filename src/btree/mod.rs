@@ -4,40 +4,10 @@ use std::ptr;
 use std::{cmp::Ordering, mem, ptr::NonNull};
 
 use crate::map::SequentialMap;
+use crate::util::{slice_insert, slice_remove};
 
 const B_MAX_NODES: usize = 11;
 const B_MID_INDEX: usize = B_MAX_NODES / 2;
-
-/// insert value into [T], which has one empty area on last.
-/// ex) insert C at 1 into [A, B, uninit] => [A, C, B]
-unsafe fn slice_insert<T>(ptr: &mut [T], index: usize, value: T) {
-    let size = ptr.len();
-    debug_assert!(size > index);
-
-    let ptr = ptr.as_mut_ptr();
-
-    if size > index + 1 {
-        ptr::copy(ptr.add(index), ptr.add(index + 1), size - index - 1);
-    }
-
-    ptr::write(ptr.add(index), value);
-}
-
-/// remove value from [T] and remain last area without any init
-/// ex) remove at 1 from [A, B, C] => [A, C, C(but you should not access here)]
-unsafe fn slice_remove<T>(ptr: &mut [T], index: usize) -> T {
-    let size = ptr.len();
-    debug_assert!(size > index);
-
-    let ptr = ptr.as_mut_ptr();
-    let value = ptr::read(ptr.add(index));
-
-    if size > index + 1 {
-        ptr::copy(ptr.add(index + 1), ptr.add(index), size - index - 1);
-    }
-
-    value
-}
 
 struct Node<K, V> {
     size: usize,

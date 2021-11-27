@@ -1,10 +1,12 @@
 use crate::map::SequentialMap;
 
 // simple sequential linked list
+#[derive(Debug)]
 pub struct LinkedList<K, V> {
     head: Node<K, V>, // dummy node with key = Default, but the key is not considered on algorithm
 }
 
+#[derive(Debug)]
 struct Node<K, V> {
     key: K,
     value: V,
