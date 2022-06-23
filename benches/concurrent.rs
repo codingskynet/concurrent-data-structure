@@ -1,14 +1,13 @@
-use criterion::{criterion_main, SamplingMode, Throughput};
-
-mod util;
-
 use std::time::Duration;
 
 use cds::{
     avltree::SeqLockAVLTree,
-    stack::{EBStack, TreiberStack},
+    stack::{EBStack, MutexStack, SpinLockStack, TreiberStack},
 };
 use criterion::{criterion_group, Criterion};
+use criterion::{criterion_main, SamplingMode, Throughput};
+
+mod util;
 
 use crate::util::concurrent::{
     bench_mixed_concurrent_map, bench_mixed_concurrent_stack, get_test_thread_nums,
@@ -18,7 +17,41 @@ const STACK_PER_OPS: usize = 50_000;
 const STACK_PUSH_RATE: usize = 50;
 const STACK_POP_RATE: usize = 50;
 
-fn bench_mixed_treiberstack(c: &mut Criterion) {
+fn bench_mixed_mutex_stack(c: &mut Criterion) {
+    let mut group = c.benchmark_group("MutexStack");
+    group.measurement_time(Duration::from_secs(20));
+    group.sampling_mode(SamplingMode::Flat);
+
+    for num in get_test_thread_nums() {
+        group.throughput(Throughput::Elements((STACK_PER_OPS * num) as u64));
+        bench_mixed_concurrent_stack::<MutexStack<_>>(
+            "MutexStack",
+            STACK_PER_OPS * STACK_PUSH_RATE / 100,
+            STACK_PER_OPS * STACK_POP_RATE / 100,
+            num,
+            &mut group,
+        );
+    }
+}
+
+fn bench_mixed_spinlock_stack(c: &mut Criterion) {
+    let mut group = c.benchmark_group("SpinLockStack");
+    group.measurement_time(Duration::from_secs(20));
+    group.sampling_mode(SamplingMode::Flat);
+
+    for num in get_test_thread_nums() {
+        group.throughput(Throughput::Elements((STACK_PER_OPS * num) as u64));
+        bench_mixed_concurrent_stack::<SpinLockStack<_>>(
+            "SpinLock",
+            STACK_PER_OPS * STACK_PUSH_RATE / 100,
+            STACK_PER_OPS * STACK_POP_RATE / 100,
+            num,
+            &mut group,
+        );
+    }
+}
+
+fn bench_mixed_treiber_stack(c: &mut Criterion) {
     assert_eq!(STACK_PUSH_RATE + STACK_POP_RATE, 100);
 
     let mut group = c.benchmark_group("TreiberStack");
@@ -119,10 +152,12 @@ fn bench_mixed_total_seqlockavltree(c: &mut Criterion) {
 
 criterion_group!(
     bench,
-    bench_mixed_treiberstack,
+    bench_mixed_mutex_stack,
+    bench_mixed_spinlock_stack,
+    bench_mixed_treiber_stack,
     bench_mixed_ebstack,
-    bench_mixed_per_seqlockavltree,
-    bench_mixed_total_seqlockavltree
+    // bench_mixed_per_seqlockavltree,
+    // bench_mixed_total_seqlockavltree
 );
 criterion_main! {
     bench,

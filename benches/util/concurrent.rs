@@ -70,11 +70,11 @@ pub fn bench_mixed_concurrent_stack<S>(
                                         let value: u64 = rng.gen();
 
                                         let start = Instant::now();
-                                        let _ = black_box(stack.push(value, &pin()));
+                                        let _ = black_box(stack.push(value));
                                         duration += start.elapsed();
                                     } else {
                                         let start = Instant::now();
-                                        let _ = black_box(stack.pop(&pin()));
+                                        let _ = black_box(stack.pop());
                                         duration += start.elapsed();
                                     }
                                 }
