@@ -1,3 +1,4 @@
+use crossbeam_epoch::pin;
 use crossbeam_epoch::unprotected;
 use crossbeam_epoch::Atomic;
 use crossbeam_epoch::Guard;
@@ -391,7 +392,7 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
         let inner_guard = unsafe { root.as_ref().unwrap().inner.read_lock() };
 
         let cursor = Cursor {
-            ancestors: Vec::with_capacity(tree.get_height(guard) + 5),
+            ancestors: Vec::with_capacity(tree.get_height() + 5),
             current: root,
             inner_guard,
             dir: Dir::Right,
@@ -539,7 +540,9 @@ impl<K, V> Drop for SeqLockAVLTree<K, V> {
 impl<K, V> SeqLockAVLTree<K, V> {
     /// get the height of the tree
     /// Since using read lock without validation for lightweight, it cannot ensure the value.
-    pub fn get_height(&self, guard: &Guard) -> usize {
+    pub fn get_height(&self) -> usize {
+        let guard = &pin();
+
         unsafe {
             if let Some(node) = self
                 .root
@@ -571,13 +574,15 @@ where
         }
     }
 
-    fn insert(&self, key: &K, value: V, guard: &Guard) -> Result<(), V> {
-        let mut cursor = Cursor::new(self, guard);
+    fn insert(&self, key: &K, value: V) -> Result<(), V> {
+        let guard = pin();
+
+        let mut cursor = Cursor::new(self, &guard);
 
         loop {
             // if the cursor is invalid, then move up until cursor.inner_guard is valid
             cursor.recover();
-            cursor.find(key, guard);
+            cursor.find(key, &guard);
 
             let write_guard = ok_or!(cursor.inner_guard.clone().upgrade(), continue);
 
@@ -598,60 +603,64 @@ where
                         continue;
                     }
 
-                    if !write_guard.value.load(Ordering::Relaxed, guard).is_null() {
+                    if !write_guard.value.load(Ordering::Relaxed, &guard).is_null() {
                         return Err(value);
                     }
 
                     write_guard
                         .value
-                        .swap(Owned::new(value), Ordering::Relaxed, guard);
+                        .swap(Owned::new(value), Ordering::Relaxed, &guard);
                 }
             }
 
             drop(write_guard);
 
-            Cursor::repair(cursor, guard);
+            Cursor::repair(cursor, &guard);
 
             return Ok(());
         }
     }
 
-    fn lookup<F, R>(&self, key: &K, guard: &Guard, f: F) -> R
+    fn lookup<F, R>(&self, key: &K, f: F) -> R
     where
         F: FnOnce(Option<&V>) -> R,
     {
-        let mut cursor = Cursor::new(self, guard);
+        let guard = pin();
+
+        let mut cursor = Cursor::new(self, &guard);
 
         loop {
             cursor.recover();
-            cursor.find(key, guard);
+            cursor.find(key, &guard);
 
             if cursor.dir == Dir::Eq {
                 let write_guard = ok_or!(cursor.inner_guard.clone().upgrade(), continue);
 
-                return unsafe { f(write_guard.value.load(Ordering::Relaxed, guard).as_ref()) };
+                return unsafe { f(write_guard.value.load(Ordering::Relaxed, &guard).as_ref()) };
             } else {
                 return f(None);
             }
         }
     }
 
-    fn get(&self, key: &K, guard: &Guard) -> Option<V>
+    fn get(&self, key: &K) -> Option<V>
     where
         V: Clone,
     {
-        let mut cursor = Cursor::new(self, guard);
+        let guard = pin();
+
+        let mut cursor = Cursor::new(self, &guard);
 
         loop {
             cursor.recover();
-            cursor.find(key, guard);
+            cursor.find(key, &guard);
 
             if cursor.dir == Dir::Eq {
                 let value = unsafe {
                     cursor
                         .inner_guard
                         .value
-                        .load(Ordering::Relaxed, guard)
+                        .load(Ordering::Relaxed, &guard)
                         .as_ref()
                         .cloned()
                 };
@@ -667,17 +676,19 @@ where
         }
     }
 
-    fn remove(&self, key: &K, guard: &Guard) -> Result<V, ()> {
-        let mut cursor = Cursor::new(self, guard);
+    fn remove(&self, key: &K) -> Result<V, ()> {
+        let guard = pin();
+
+        let mut cursor = Cursor::new(self, &guard);
 
         loop {
             cursor.recover();
-            cursor.find(key, guard);
+            cursor.find(key, &guard);
 
             let value_is_null = cursor
                 .inner_guard
                 .value
-                .load(Ordering::Relaxed, guard)
+                .load(Ordering::Relaxed, &guard)
                 .is_null();
 
             if cursor.dir != Dir::Eq || (value_is_null && cursor.inner_guard.validate()) {
@@ -688,11 +699,11 @@ where
 
             let value = write_guard
                 .value
-                .swap(Shared::null(), Ordering::Relaxed, guard);
+                .swap(Shared::null(), Ordering::Relaxed, &guard);
 
             drop(write_guard);
 
-            Cursor::repair(cursor, guard);
+            Cursor::repair(cursor, &guard);
 
             return unsafe { Ok(*(value.into_owned().into_box())) };
         }

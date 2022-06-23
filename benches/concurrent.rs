@@ -6,12 +6,11 @@ use cds::{
 };
 use criterion::{criterion_group, Criterion};
 use criterion::{criterion_main, SamplingMode, Throughput};
+use util::concurrent::criterion_bench_mixed_concurrent_map;
 
 mod util;
 
-use crate::util::concurrent::{
-    bench_mixed_concurrent_map, bench_mixed_concurrent_stack, get_test_thread_nums,
-};
+use crate::util::concurrent::{bench_mixed_concurrent_stack, get_test_thread_nums};
 
 const STACK_PER_OPS: usize = 50_000;
 const STACK_PUSH_RATE: usize = 50;
@@ -110,7 +109,7 @@ fn bench_mixed_per_seqlockavltree(c: &mut Criterion) {
     for (insert, lookup, remove) in OPS_RATE {
         for num in get_test_thread_nums() {
             group.throughput(Throughput::Elements((MAP_PER_OPS * num) as u64));
-            bench_mixed_concurrent_map::<SeqLockAVLTree<_, _>>(
+            criterion_bench_mixed_concurrent_map::<SeqLockAVLTree<_, _>>(
                 "SeqLockAVLTree",
                 MAP_ALREADY_INSERTED,
                 MAP_PER_OPS * insert / 100,
@@ -118,7 +117,7 @@ fn bench_mixed_per_seqlockavltree(c: &mut Criterion) {
                 MAP_PER_OPS * remove / 100,
                 num,
                 &mut group,
-            )
+            );
         }
     }
 
@@ -135,7 +134,7 @@ fn bench_mixed_total_seqlockavltree(c: &mut Criterion) {
         for num in get_test_thread_nums() {
             group.throughput(Throughput::Elements(MAP_TOTAL_OPS as u64));
             let per_op = MAP_TOTAL_OPS / num;
-            bench_mixed_concurrent_map::<SeqLockAVLTree<_, _>>(
+            criterion_bench_mixed_concurrent_map::<SeqLockAVLTree<_, _>>(
                 "SeqLockAVLTree",
                 MAP_ALREADY_INSERTED,
                 per_op * insert / 100,
@@ -143,7 +142,7 @@ fn bench_mixed_total_seqlockavltree(c: &mut Criterion) {
                 per_op * remove / 100,
                 num,
                 &mut group,
-            )
+            );
         }
     }
 
@@ -156,8 +155,8 @@ criterion_group!(
     bench_mixed_spinlock_stack,
     bench_mixed_treiber_stack,
     bench_mixed_ebstack,
-    // bench_mixed_per_seqlockavltree,
-    // bench_mixed_total_seqlockavltree
+    bench_mixed_per_seqlockavltree,
+    bench_mixed_total_seqlockavltree
 );
 criterion_main! {
     bench,
