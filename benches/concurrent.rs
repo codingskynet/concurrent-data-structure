@@ -97,6 +97,7 @@ const OPS_RATE: [(u64, u64, u64); 7] = [
     (50, 0, 50),
 ];
 
+// use for micro benchmark
 fn bench_mixed_per_seqlockavltree(c: &mut Criterion) {
     for (insert, lookup, remove) in OPS_RATE {
         let mut group = c.benchmark_group(format!(
@@ -122,6 +123,7 @@ fn bench_mixed_per_seqlockavltree(c: &mut Criterion) {
     }
 }
 
+// use for macro benchmark
 fn bench_mixed_total_seqlockavltree(c: &mut Criterion) {
     for (insert, lookup, remove) in OPS_RATE {
         let mut group = c.benchmark_group(format!(
