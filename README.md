@@ -11,7 +11,7 @@ Implement sequential, lock-based and lock-free concurrent data structures below:
 
 ## Detail
 ### Stack
-- Implement Lock Stack(based on std::mutex and spin lock)
+- Implement Lock Stack(based on std::sync::Mutex and spin lock)
 - Implement [Treiber's Stack](https://dominoweb.draco.res.ibm.com/58319a2ed2b1078985257003004617ef.html)
 - Implement [Elimination-Backoff Stack](https://people.csail.mit.edu/shanir/publications/Lock_Free.pdf)
 
