@@ -38,67 +38,58 @@ pub fn bench_mixed_concurrent_stack<S>(
 {
     let per_ops = push + pop;
 
-    c.bench_function(
-        &format!(
-            "Ops (push: {}%, pop: {}%, per: {:+e}) by {} threads",
-            push * 100 / per_ops,
-            pop * 100 / per_ops,
-            per_ops,
-            thread_num,
-        ),
-        |b| {
-            b.iter_custom(|iters| {
-                let stack = S::new();
+    c.bench_function(&format!("{} threads", thread_num,), |b| {
+        b.iter_custom(|iters| {
+            let stack = S::new();
 
-                let mut duration = Duration::ZERO;
-                for _ in 0..iters {
-                    let batched_time = thread::scope(|s| {
-                        let mut threads = Vec::new();
+            let mut duration = Duration::ZERO;
+            for _ in 0..iters {
+                let batched_time = thread::scope(|s| {
+                    let mut threads = Vec::new();
 
-                        for _ in 0..thread_num {
-                            let t = s.spawn(|_| {
-                                let mut rng = thread_rng();
-                                let mut duration = Duration::ZERO;
+                    for _ in 0..thread_num {
+                        let t = s.spawn(|_| {
+                            let mut rng = thread_rng();
+                            let mut duration = Duration::ZERO;
 
-                                for _ in 0..per_ops {
-                                    let op_idx = rng.gen_range(0..per_ops);
+                            for _ in 0..per_ops {
+                                let op_idx = rng.gen_range(0..per_ops);
 
-                                    if op_idx < push {
-                                        let value: u64 = rng.gen();
+                                if op_idx < push {
+                                    let value: u64 = rng.gen();
 
-                                        let start = Instant::now();
-                                        let _ = black_box(stack.push(value));
-                                        duration += start.elapsed();
-                                    } else {
-                                        let start = Instant::now();
-                                        let _ = black_box(stack.pop());
-                                        duration += start.elapsed();
-                                    }
+                                    let start = Instant::now();
+                                    let _ = black_box(stack.push(value));
+                                    duration += start.elapsed();
+                                } else {
+                                    let start = Instant::now();
+                                    let _ = black_box(stack.pop());
+                                    duration += start.elapsed();
                                 }
+                            }
 
-                                duration
-                            });
+                            duration
+                        });
 
-                            threads.push(t);
-                        }
+                        threads.push(t);
+                    }
 
-                        threads
-                            .into_iter()
-                            .map(|h| h.join().unwrap())
-                            .collect::<Vec<_>>()
-                            .iter()
-                            .sum::<Duration>()
-                    })
-                    .unwrap();
+                    threads
+                        .into_iter()
+                        .map(|h| h.join().unwrap())
+                        .collect::<Vec<_>>()
+                        .iter()
+                        .sum::<Duration>()
+                })
+                .unwrap();
 
-                    duration += batched_time
-                }
+                duration += batched_time
+            }
 
-                // avg thread time
-                duration / (thread_num as u32)
-            });
-        },
-    );
+            // avg thread time
+            duration / (thread_num as u32)
+        });
+    });
 }
 
 pub fn criterion_flat_bench_mixed_concurrent_map<M>(
@@ -112,8 +103,20 @@ pub fn criterion_flat_bench_mixed_concurrent_map<M>(
     M: Sync + ConcurrentMap<u64, u64>,
 {
     c.bench_function(&format!("{} threads", thread_num,), |b| {
-        b.iter(|| {
-            bench_mixed_concurrent_map::<M>(already_inserted, insert, lookup, remove, thread_num)
+        b.iter_custom(|iters| {
+            let mut duraction = Duration::ZERO;
+
+            for _ in 0..iters {
+                duraction += bench_mixed_concurrent_map::<M>(
+                    already_inserted,
+                    insert,
+                    lookup,
+                    remove,
+                    thread_num,
+                );
+            }
+
+            duraction
         })
     });
 }

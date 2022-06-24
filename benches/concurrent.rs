@@ -19,7 +19,10 @@ const STACK_PUSH_RATE: usize = 50;
 const STACK_POP_RATE: usize = 50;
 
 fn bench_mixed_mutex_stack(c: &mut Criterion) {
-    let mut group = c.benchmark_group("MutexStack");
+    let mut group = c.benchmark_group(format!(
+        "MutexStack/Ops(push: {}%, pop: {}%, per: {:+e})",
+        STACK_PUSH_RATE, STACK_POP_RATE, STACK_PER_OPS
+    ));
     group.measurement_time(Duration::from_secs(20));
     group.sampling_mode(SamplingMode::Flat);
 
@@ -35,7 +38,10 @@ fn bench_mixed_mutex_stack(c: &mut Criterion) {
 }
 
 fn bench_mixed_spinlock_stack(c: &mut Criterion) {
-    let mut group = c.benchmark_group("SpinLockStack");
+    let mut group = c.benchmark_group(format!(
+        "SpinLockStack/Ops(push: {}%, pop: {}%, per: {:+e})",
+        STACK_PUSH_RATE, STACK_POP_RATE, STACK_PER_OPS
+    ));
     group.measurement_time(Duration::from_secs(20));
     group.sampling_mode(SamplingMode::Flat);
 
@@ -51,9 +57,10 @@ fn bench_mixed_spinlock_stack(c: &mut Criterion) {
 }
 
 fn bench_mixed_treiber_stack(c: &mut Criterion) {
-    assert_eq!(STACK_PUSH_RATE + STACK_POP_RATE, 100);
-
-    let mut group = c.benchmark_group("TreiberStack");
+    let mut group = c.benchmark_group(format!(
+        "TreiberStack/Ops(push: {}%, pop: {}%, per: {:+e})",
+        STACK_PUSH_RATE, STACK_POP_RATE, STACK_PER_OPS
+    ));
     group.measurement_time(Duration::from_secs(20));
     group.sampling_mode(SamplingMode::Flat);
 
@@ -69,7 +76,10 @@ fn bench_mixed_treiber_stack(c: &mut Criterion) {
 }
 
 fn bench_mixed_ebstack(c: &mut Criterion) {
-    let mut group = c.benchmark_group("EBStack");
+    let mut group = c.benchmark_group(format!(
+        "EBStack/Ops(push: {}%, pop: {}%, per: {:+e})",
+        STACK_PUSH_RATE, STACK_POP_RATE, STACK_PER_OPS
+    ));
     group.measurement_time(Duration::from_secs(20));
     group.sampling_mode(SamplingMode::Flat);
 
@@ -101,7 +111,7 @@ const OPS_RATE: [(u64, u64, u64); 7] = [
 fn bench_mixed_per_seqlockavltree(c: &mut Criterion) {
     for (insert, lookup, remove) in OPS_RATE {
         let mut group = c.benchmark_group(format!(
-            "SeqLockAVLTree/{:+e} pre-inserted, Ops(I: {}%, L: {}%, R: {}%, scaled by iters)",
+            "SeqLockAVLTree/{:+e} pre-inserted, Ops(I: {}%, L: {}%, R: {}%, per: scaled by iters)",
             MAP_ALREADY_INSERTED, insert, lookup, remove
         ));
         group.sample_size(20);
