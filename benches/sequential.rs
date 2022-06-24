@@ -1,72 +1,54 @@
-use criterion::criterion_main;
+use std::time::Duration;
+
+use criterion::{criterion_main, SamplingMode, Throughput};
 
 mod util;
 
 use cds::{avltree::AVLTree, btree::BTree};
 use criterion::{criterion_group, Criterion};
-use util::sequential::{bench_mixed_sequential_map, bench_sequential_map};
+use util::sequential::fuzz_sequential_logs;
+
+use crate::util::sequential::{bench_logs_btreemap, bench_logs_sequential_map};
 
 const MAP_ALREADY_INSERTED: u64 = 500_000;
-const MAP_TOTAL_OPS: usize = 500_000;
-const MAP_INSERT_RATE: usize = 30;
-const MAP_LOOKUP_RATE: usize = 50;
-const MAP_REMOVE_RATE: usize = 20;
+const MAP_TOTAL_OPS: usize = 192_000;
 
-fn bench_btreemap(c: &mut Criterion) {
-    util::sequential::bench_btreemap(1_000_000, c);
+const OPS_RATE: [(usize, usize, usize); 7] = [
+    (100, 0, 0),
+    (0, 100, 0),
+    (0, 0, 100),
+    (5, 90, 5),
+    (30, 50, 20),
+    (40, 20, 40),
+    (50, 0, 50),
+];
+
+fn bench_vs_btreemap(c: &mut Criterion) {
+    for (insert, lookup, remove) in OPS_RATE {
+        let logs = fuzz_sequential_logs(
+            200,
+            MAP_ALREADY_INSERTED,
+            MAP_TOTAL_OPS * insert / 100,
+            MAP_TOTAL_OPS * lookup / 100,
+            MAP_TOTAL_OPS * remove / 100,
+        );
+
+        let mut group = c.benchmark_group(format!(
+            "Inserted {:+e}, Ops (I: {}%, L: {}%, R: {}%, total: {:+e})",
+            MAP_ALREADY_INSERTED, insert, lookup, remove, MAP_TOTAL_OPS
+        ));
+        group.measurement_time(Duration::from_secs(15)); // Note: make almost same the measurement_time to iters * avg_op_time
+        group.sampling_mode(SamplingMode::Flat);
+        group.sample_size(20);
+        group.throughput(Throughput::Elements(MAP_TOTAL_OPS as u64));
+
+        bench_logs_btreemap(logs.clone(), &mut group);
+        bench_logs_sequential_map::<BTree<_, _>>("BTree", logs.clone(), &mut group);
+        bench_logs_sequential_map::<AVLTree<_, _>>("AVLTree", logs, &mut group);
+    }
 }
 
-fn bench_mixed_btreemap(c: &mut Criterion) {
-    assert_eq!(MAP_INSERT_RATE + MAP_LOOKUP_RATE + MAP_REMOVE_RATE, 100);
-
-    util::sequential::bench_mixed_btreemap(
-        MAP_ALREADY_INSERTED,
-        MAP_TOTAL_OPS * MAP_INSERT_RATE / 100,
-        MAP_TOTAL_OPS * MAP_LOOKUP_RATE / 100,
-        MAP_TOTAL_OPS * MAP_REMOVE_RATE / 100,
-        c,
-    );
-}
-
-fn bench_avltree(c: &mut Criterion) {
-    bench_sequential_map::<AVLTree<_, _>>("AVLTree", 1_000_000, c);
-}
-
-fn bench_mixed_avltree(c: &mut Criterion) {
-    bench_mixed_sequential_map::<AVLTree<_, _>>(
-        "AVLTree",
-        MAP_ALREADY_INSERTED,
-        MAP_TOTAL_OPS * MAP_INSERT_RATE / 100,
-        MAP_TOTAL_OPS * MAP_LOOKUP_RATE / 100,
-        MAP_TOTAL_OPS * MAP_REMOVE_RATE / 100,
-        c,
-    );
-}
-
-fn bench_btree(c: &mut Criterion) {
-    bench_sequential_map::<BTree<_, _>>("BTree", 1_000_000, c);
-}
-
-fn bench_mixed_btree(c: &mut Criterion) {
-    bench_mixed_sequential_map::<BTree<_, _>>(
-        "BTree",
-        MAP_ALREADY_INSERTED,
-        MAP_TOTAL_OPS * MAP_INSERT_RATE / 100,
-        MAP_TOTAL_OPS * MAP_LOOKUP_RATE / 100,
-        MAP_TOTAL_OPS * MAP_REMOVE_RATE / 100,
-        c,
-    );
-}
-
-criterion_group!(
-    bench,
-    bench_btreemap,
-    bench_mixed_btreemap,
-    bench_avltree,
-    bench_mixed_avltree,
-    bench_btree,
-    bench_mixed_btree,
-);
+criterion_group!(bench, bench_vs_btreemap);
 criterion_main! {
     bench,
 }

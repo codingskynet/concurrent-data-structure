@@ -8,18 +8,18 @@ use core::sync::atomic::{fence, AtomicUsize, Ordering};
 use crossbeam_utils::Backoff;
 
 #[derive(Debug)]
-pub struct RawSeqLock {
+struct RawSeqLock {
     seq: AtomicUsize,
 }
 
 impl RawSeqLock {
-    pub const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             seq: AtomicUsize::new(0),
         }
     }
 
-    pub fn write_lock(&self) -> usize {
+    fn write_lock(&self) -> usize {
         let backoff = Backoff::new();
 
         loop {
@@ -43,11 +43,11 @@ impl RawSeqLock {
         }
     }
 
-    pub fn write_unlock(&self, seq: usize) {
+    fn write_unlock(&self, seq: usize) {
         self.seq.store(seq.wrapping_add(2), Ordering::Release);
     }
 
-    pub fn read_begin(&self) -> usize {
+    fn read_begin(&self) -> usize {
         let backoff = Backoff::new();
 
         loop {
@@ -60,13 +60,13 @@ impl RawSeqLock {
         }
     }
 
-    pub fn read_validate(&self, seq: usize) -> bool {
+    fn read_validate(&self, seq: usize) -> bool {
         fence(Ordering::Acquire);
 
         seq == self.seq.load(Ordering::Relaxed)
     }
 
-    pub unsafe fn upgrade(&self, seq: usize) -> Result<(), ()> {
+    unsafe fn upgrade(&self, seq: usize) -> Result<(), ()> {
         if self
             .seq
             .compare_exchange(

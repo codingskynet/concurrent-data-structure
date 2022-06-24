@@ -381,7 +381,7 @@ impl<'g, K, V> Cursor<'g, K, V> {
         let inner_guard = unsafe { root.as_ref().unwrap().inner.read().unwrap() };
 
         let cursor = Cursor {
-            ancestors: Vec::with_capacity(tree.get_height(guard) + 5),
+            ancestors: Vec::with_capacity(tree.get_height() + 5),
             current: root,
             inner_guard: ManuallyDrop::new(inner_guard),
             dir: Dir::Right,
@@ -497,18 +497,18 @@ impl<K, V> RwLockAVLTree<K, V> {
     }
 
     /// get the height of the tree
-    pub fn get_height(&self, guard: &Guard) -> usize {
+    pub fn get_height(&self) -> usize {
         unsafe {
             if let Some(node) = self
                 .root
-                .load(Ordering::Relaxed, guard)
+                .load(Ordering::Relaxed, &pin())
                 .as_ref()
                 .unwrap()
                 .inner
                 .read()
                 .unwrap()
                 .right
-                .load(Ordering::Acquire, guard)
+                .load(Ordering::Acquire, &pin())
                 .as_ref()
             {
                 node.height.load(Ordering::Relaxed) as usize
@@ -530,12 +530,14 @@ where
         }
     }
 
-    fn insert(&self, key: &K, value: V, guard: &Guard) -> Result<(), V> {
+    fn insert(&self, key: &K, value: V) -> Result<(), V> {
+        let guard = pin();
+
         let node = Node::new(key.clone(), value);
 
         // TODO: it can be optimized by re-search nearby ancestors
         loop {
-            let mut cursor = self.find(key, guard);
+            let mut cursor = self.find(key, &guard);
 
             // unlock read lock and lock write lock... very inefficient, need upgrade from read lock to write lock
             unsafe {
@@ -553,7 +555,7 @@ where
             // TODO: is it efficient? It needs to check only whether the current is connected, not checking the current's parent is changed.
             let parent_read_guard = if let Some((parent, dir)) = cursor.ancestors.last() {
                 let parent_read_guard = unsafe { parent.as_ref().unwrap().inner.read().unwrap() };
-                if !parent_read_guard.is_same_child(*dir, cursor.current, guard) {
+                if !parent_read_guard.is_same_child(*dir, cursor.current, &guard) {
                     // Before inserting, the current is already disconnected.
                     continue;
                 }
@@ -568,14 +570,14 @@ where
 
             match cursor.dir {
                 Dir::Left => {
-                    if !write_guard.left.load(Ordering::Relaxed, guard).is_null() {
+                    if !write_guard.left.load(Ordering::Relaxed, &guard).is_null() {
                         continue; // some thread already writed. Retry
                     }
 
                     write_guard.left.store(Owned::new(node), Ordering::Relaxed);
                 }
                 Dir::Right => {
-                    if !write_guard.right.load(Ordering::Relaxed, guard).is_null() {
+                    if !write_guard.right.load(Ordering::Relaxed, &guard).is_null() {
                         continue; // some thread already writed. Retry
                     }
 
@@ -594,17 +596,19 @@ where
 
             drop(write_guard);
 
-            Cursor::repair(cursor, guard);
+            Cursor::repair(cursor, &guard);
 
             return Ok(());
         }
     }
 
-    fn lookup<F, R>(&self, key: &K, guard: &Guard, f: F) -> R
+    fn lookup<F, R>(&self, key: &K, f: F) -> R
     where
         F: FnOnce(Option<&V>) -> R,
     {
-        let mut cursor = self.find(key, guard);
+        let guard = pin();
+
+        let mut cursor = self.find(key, &guard);
 
         if cursor.dir == Dir::Eq {
             unsafe {
@@ -619,11 +623,13 @@ where
         }
     }
 
-    fn get(&self, key: &K, guard: &Guard) -> Option<V>
+    fn get(&self, key: &K) -> Option<V>
     where
         V: Clone,
     {
-        let mut cursor = self.find(key, guard);
+        let guard = pin();
+
+        let mut cursor = self.find(key, &guard);
 
         if cursor.dir == Dir::Eq {
             let inner_guard = ManuallyDrop::into_inner(cursor.inner_guard);
@@ -634,8 +640,10 @@ where
         }
     }
 
-    fn remove(&self, key: &K, guard: &Guard) -> Result<V, ()> {
-        let mut cursor = self.find(key, guard);
+    fn remove(&self, key: &K) -> Result<V, ()> {
+        let guard = pin();
+
+        let mut cursor = self.find(key, &guard);
 
         let current = unsafe { cursor.current.as_ref().unwrap() };
         unsafe { ManuallyDrop::drop(&mut cursor.inner_guard) };
@@ -654,7 +662,7 @@ where
         let value = write_guard.value.take().unwrap();
         drop(write_guard);
 
-        Cursor::repair(cursor, guard);
+        Cursor::repair(cursor, &guard);
 
         Ok(value)
     }
