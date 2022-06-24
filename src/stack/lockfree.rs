@@ -1,6 +1,6 @@
 use std::{mem::ManuallyDrop, ptr, sync::atomic::Ordering, thread, time::Duration};
 
-use crossbeam_epoch::{Atomic, Guard, Owned, Shared, pin};
+use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 use crossbeam_utils::Backoff;
 use rand::{thread_rng, Rng};
 
@@ -115,8 +115,8 @@ impl<V> ConcurrentStack<V> for TreiberStack<V> {
     }
 }
 
-const ELIM_SIZE: usize = 10;
-const ELIM_DELAY: Duration = Duration::from_millis(10);
+const ELIM_SIZE: usize = 4;
+const ELIM_DELAY: Duration = Duration::from_millis(1);
 
 /// Elimination-Backoff Stack
 ///

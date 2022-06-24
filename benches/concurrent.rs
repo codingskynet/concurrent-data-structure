@@ -14,7 +14,7 @@ use util::concurrent::{
     criterion_linear_bench_mixed_concurrent_map, get_test_thread_nums,
 };
 
-const STACK_PER_OPS: usize = 50_000;
+const STACK_PER_OPS: usize = 10_000;
 const STACK_PUSH_RATE: usize = 50;
 const STACK_POP_RATE: usize = 50;
 
@@ -23,7 +23,7 @@ fn bench_mixed_mutex_stack(c: &mut Criterion) {
         "MutexStack/Ops(push: {}%, pop: {}%, per: {:+e})",
         STACK_PUSH_RATE, STACK_POP_RATE, STACK_PER_OPS
     ));
-    group.measurement_time(Duration::from_secs(20));
+    group.measurement_time(Duration::from_secs(5));
     group.sampling_mode(SamplingMode::Flat);
 
     for num in get_test_thread_nums() {
@@ -42,7 +42,7 @@ fn bench_mixed_spinlock_stack(c: &mut Criterion) {
         "SpinLockStack/Ops(push: {}%, pop: {}%, per: {:+e})",
         STACK_PUSH_RATE, STACK_POP_RATE, STACK_PER_OPS
     ));
-    group.measurement_time(Duration::from_secs(20));
+    group.measurement_time(Duration::from_secs(5));
     group.sampling_mode(SamplingMode::Flat);
 
     for num in get_test_thread_nums() {
@@ -61,7 +61,7 @@ fn bench_mixed_treiber_stack(c: &mut Criterion) {
         "TreiberStack/Ops(push: {}%, pop: {}%, per: {:+e})",
         STACK_PUSH_RATE, STACK_POP_RATE, STACK_PER_OPS
     ));
-    group.measurement_time(Duration::from_secs(20));
+    group.measurement_time(Duration::from_secs(5));
     group.sampling_mode(SamplingMode::Flat);
 
     for num in get_test_thread_nums() {
@@ -80,7 +80,7 @@ fn bench_mixed_ebstack(c: &mut Criterion) {
         "EBStack/Ops(push: {}%, pop: {}%, per: {:+e})",
         STACK_PUSH_RATE, STACK_POP_RATE, STACK_PER_OPS
     ));
-    group.measurement_time(Duration::from_secs(20));
+    group.measurement_time(Duration::from_secs(5));
     group.sampling_mode(SamplingMode::Flat);
 
     for num in get_test_thread_nums() {
@@ -168,7 +168,7 @@ criterion_group!(
     bench_mixed_treiber_stack,
     bench_mixed_ebstack,
     bench_mixed_per_seqlockavltree,
-    bench_mixed_total_seqlockavltree
+    bench_mixed_total_seqlockavltree,
 );
 criterion_main! {
     bench,
