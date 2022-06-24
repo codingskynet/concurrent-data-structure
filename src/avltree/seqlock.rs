@@ -1,21 +1,121 @@
-use crossbeam_epoch::pin;
-use crossbeam_epoch::unprotected;
-use crossbeam_epoch::Atomic;
-use crossbeam_epoch::Guard;
-use crossbeam_epoch::Owned;
-use crossbeam_epoch::Shared;
 use std::cmp::max;
 use std::fmt::Debug;
 use std::mem;
-use std::sync::atomic::AtomicIsize;
-use std::sync::atomic::Ordering;
+use std::mem::ManuallyDrop;
+use std::sync::atomic::{AtomicIsize, Ordering};
 
-use crate::lock::seqlock::ReadGuard;
-use crate::lock::seqlock::SeqLock;
-use crate::lock::seqlock::WriteGuard;
+use crossbeam_epoch::{pin, unprotected, Atomic, Guard, Owned, Shared};
+
+use crate::lock::seqlock::{ReadGuard, SeqLock, WriteGuard};
 use crate::map::ConcurrentMap;
-use crate::ok_or;
-use crate::some_or;
+
+struct NodeInner<K, V> {
+    value: Atomic<V>,
+    left: Atomic<Node<K, V>>,
+    right: Atomic<Node<K, V>>,
+}
+
+impl<K: Debug, V: Debug> Debug for NodeInner<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        unsafe {
+            let mut result = f.debug_struct("NodeInner");
+
+            if let Some(value) = self.value.load(Ordering::Relaxed, unprotected()).as_ref() {
+                result.field("value", &Some(value));
+            } else {
+                result.field("value", &None::<V>);
+            }
+
+            if let Some(left) = self.left.load(Ordering::Acquire, unprotected()).as_ref() {
+                result.field("left", left);
+            } else {
+                result.field("left", &"null");
+            }
+
+            if let Some(right) = self.right.load(Ordering::Acquire, unprotected()).as_ref() {
+                result.field("right", right);
+            } else {
+                result.field("right", &"null");
+            }
+
+            result.finish()
+        }
+    }
+}
+
+impl<K, V> Drop for NodeInner<K, V> {
+    fn drop(&mut self) {
+        unsafe {
+            let value = self.value.load(Ordering::Relaxed, unprotected());
+            if !value.is_null() {
+                drop(value.into_owned());
+            }
+
+            let left = self.left.load(Ordering::Relaxed, unprotected());
+            if !left.is_null() {
+                drop(left.into_owned());
+            }
+
+            let right = self.right.load(Ordering::Relaxed, unprotected());
+            if !right.is_null() {
+                drop(right.into_owned());
+            }
+        }
+    }
+}
+
+impl<K, V> NodeInner<K, V> {
+    fn get_child(&self, dir: Dir) -> &Atomic<Node<K, V>> {
+        match dir {
+            Dir::Left => &self.left,
+            Dir::Right => &self.right,
+            Dir::Eq => unreachable!(),
+        }
+    }
+
+    #[inline(always)]
+    fn is_same_child(&self, dir: Dir, child: Shared<Node<K, V>>, guard: &Guard) -> bool {
+        self.get_child(dir).load(Ordering::Relaxed, guard) == child
+    }
+
+    fn get_factor(&self, guard: &Guard) -> isize {
+        let left = self.left.load(Ordering::Acquire, guard);
+        let right = self.right.load(Ordering::Acquire, guard);
+
+        let left_height = if !left.is_null() {
+            unsafe { left.as_ref().unwrap().height.load(Ordering::Relaxed) }
+        } else {
+            0
+        };
+
+        let right_height = if !right.is_null() {
+            unsafe { right.as_ref().unwrap().height.load(Ordering::Relaxed) }
+        } else {
+            0
+        };
+
+        left_height - right_height
+    }
+
+    fn get_new_height(&self, guard: &Guard) -> isize {
+        let left = self.left.load(Ordering::Acquire, guard);
+        let right = self.right.load(Ordering::Acquire, guard);
+
+        let left = if !left.is_null() {
+            unsafe { left.as_ref().unwrap().height.load(Ordering::Relaxed) }
+        } else {
+            0
+        };
+
+        let right = if !right.is_null() {
+            unsafe { right.as_ref().unwrap().height.load(Ordering::Relaxed) }
+        } else {
+            0
+        };
+
+        max(left, right) + 1
+    }
+}
 
 struct Node<K, V> {
     key: K,
@@ -118,7 +218,11 @@ impl<K, V> Node<K, V> {
 
                 // check if current's parent is even parent now
                 if parent_write_guard.is_same_child(dir, current, guard) {
-                    let write_guard = ok_or!(read_guard.upgrade(), return false);
+                    let write_guard = if let Ok(write_guard) = read_guard.upgrade() {
+                        write_guard
+                    } else {
+                        return false;
+                    };
 
                     let replace_node = if !left {
                         write_guard
@@ -149,6 +253,7 @@ impl<K, V> Node<K, V> {
             }
         }
 
+        read_guard.forget();
         false
     }
 
@@ -156,8 +261,12 @@ impl<K, V> Node<K, V> {
     ///
     /// If the relation among the nodes is not changed and the heights are needed to rotate, do it.
     fn try_rebalance<'g>(
-        (parent, parent_read_guard): (Shared<Node<K, V>>, ReadGuard<NodeInner<K, V>>),
-        (root, _, root_dir): &(Shared<Node<K, V>>, ReadGuard<NodeInner<K, V>>, Dir), // if rotating, root's child pointer should be rewritten
+        (parent, parent_read_guard): (Shared<Node<K, V>>, ManuallyDrop<ReadGuard<NodeInner<K, V>>>),
+        (root, _, root_dir): &(
+            Shared<Node<K, V>>,
+            ManuallyDrop<ReadGuard<NodeInner<K, V>>>,
+            Dir,
+        ), // if rotating, root's child pointer should be rewritten
         guard: &'g Guard,
     ) {
         if (-1..=1).contains(&parent_read_guard.get_factor(guard)) {
@@ -185,6 +294,7 @@ impl<K, V> Node<K, V> {
             if current_guard.get_factor(guard) > 0 {
                 // partial RL rotation
                 let left_child = current_guard.left.load(Ordering::Relaxed, guard);
+
                 let left_child_guard = unsafe { left_child.as_ref().unwrap().inner.write_lock() };
 
                 parent_guard.right.store(
@@ -218,6 +328,7 @@ impl<K, V> Node<K, V> {
             if current_guard.get_factor(guard) < 0 {
                 // partial LR rotation
                 let right_child = current_guard.right.load(Ordering::Relaxed, guard);
+
                 let right_child_guard = unsafe { right_child.as_ref().unwrap().inner.write_lock() };
 
                 parent_guard.left.store(
@@ -262,114 +373,6 @@ impl<K, V> Node<K, V> {
     }
 }
 
-struct NodeInner<K, V> {
-    value: Atomic<V>,
-    left: Atomic<Node<K, V>>,
-    right: Atomic<Node<K, V>>,
-}
-
-impl<K: Debug, V: Debug> Debug for NodeInner<K, V> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        unsafe {
-            let mut result = f.debug_struct("NodeInner");
-
-            if let Some(value) = self.value.load(Ordering::Relaxed, unprotected()).as_ref() {
-                result.field("value", &Some(value));
-            } else {
-                result.field("value", &None::<V>);
-            }
-
-            if let Some(left) = self.left.load(Ordering::Acquire, unprotected()).as_ref() {
-                result.field("left", left);
-            } else {
-                result.field("left", &"null");
-            }
-
-            if let Some(right) = self.right.load(Ordering::Acquire, unprotected()).as_ref() {
-                result.field("right", right);
-            } else {
-                result.field("right", &"null");
-            }
-
-            result.finish()
-        }
-    }
-}
-
-impl<K, V> Drop for NodeInner<K, V> {
-    fn drop(&mut self) {
-        unsafe {
-            let value = self.value.load(Ordering::Relaxed, unprotected());
-            if !value.is_null() {
-                drop(value.into_owned());
-            }
-
-            let left = self.left.load(Ordering::Relaxed, unprotected());
-            if !left.is_null() {
-                drop(left.into_owned());
-            }
-
-            let right = self.right.load(Ordering::Relaxed, unprotected());
-            if !right.is_null() {
-                drop(right.into_owned());
-            }
-        }
-    }
-}
-
-impl<K, V> NodeInner<K, V> {
-    fn get_child(&self, dir: Dir) -> &Atomic<Node<K, V>> {
-        match dir {
-            Dir::Left => &self.left,
-            Dir::Right => &self.right,
-            Dir::Eq => unreachable!(),
-        }
-    }
-
-    #[inline(always)]
-    fn is_same_child(&self, dir: Dir, child: Shared<Node<K, V>>, guard: &Guard) -> bool {
-        self.get_child(dir).load(Ordering::Relaxed, guard) == child
-    }
-
-    fn get_factor(&self, guard: &Guard) -> isize {
-        let left = self.left.load(Ordering::Acquire, guard);
-        let right = self.right.load(Ordering::Acquire, guard);
-
-        let left_height = if let Some(left) = unsafe { left.as_ref() } {
-            left.height.load(Ordering::Relaxed)
-        } else {
-            0
-        };
-
-        let right_height = if let Some(right) = unsafe { right.as_ref() } {
-            right.height.load(Ordering::Relaxed)
-        } else {
-            0
-        };
-
-        left_height - right_height
-    }
-
-    fn get_new_height(&self, guard: &Guard) -> isize {
-        let left = self.left.load(Ordering::Acquire, guard);
-        let right = self.right.load(Ordering::Acquire, guard);
-
-        let left_height = if let Some(left) = unsafe { left.as_ref() } {
-            left.height.load(Ordering::Relaxed)
-        } else {
-            0
-        };
-
-        let right_height = if let Some(right) = unsafe { right.as_ref() } {
-            right.height.load(Ordering::Relaxed)
-        } else {
-            0
-        };
-
-        max(left_height, right_height) + 1
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Dir {
     Left,
@@ -378,11 +381,15 @@ enum Dir {
 }
 
 struct Cursor<'g, K, V> {
-    ancestors: Vec<(Shared<'g, Node<K, V>>, ReadGuard<'g, NodeInner<K, V>>, Dir)>,
+    ancestors: Vec<(
+        Shared<'g, Node<K, V>>,
+        ManuallyDrop<ReadGuard<'g, NodeInner<K, V>>>,
+        Dir,
+    )>,
     current: Shared<'g, Node<K, V>>,
     /// the read lock for current node's inner
     /// It keeps current node's inner and is for hand-over-hand locking.
-    inner_guard: ReadGuard<'g, NodeInner<K, V>>,
+    inner_guard: ManuallyDrop<ReadGuard<'g, NodeInner<K, V>>>,
     dir: Dir,
 }
 
@@ -394,7 +401,7 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
         let cursor = Cursor {
             ancestors: Vec::with_capacity(tree.get_height() + 5),
             current: root,
-            inner_guard,
+            inner_guard: ManuallyDrop::new(inner_guard),
             dir: Dir::Right,
         };
 
@@ -424,21 +431,23 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
 
     /// move to parent until self.inner_guard is valid
     fn recover(&mut self) {
-        while let Some((node, read_guard, dir)) = self.ancestors.pop() {
-            self.current = node;
-            self.inner_guard = read_guard;
-            self.dir = dir;
+        while let Some((parent, parent_read_guard, dir)) = self.ancestors.pop() {
+            if parent_read_guard.validate() {
+                self.current = parent;
+                self.inner_guard = parent_read_guard;
+                self.dir = dir;
+                break;
+            }
 
-            if let Some((_, parent_read_guard, _)) = self.ancestors.last() {
-                if self.inner_guard.validate() && parent_read_guard.validate() {
-                    break;
-                }
+            // now parent is root
+            if self.ancestors.is_empty() {
+                self.current = parent;
+                self.inner_guard = parent_read_guard;
+                self.dir = dir;
             }
         }
 
-        if self.ancestors.is_empty() {
-            self.inner_guard.restart();
-        }
+        self.inner_guard.restart();
     }
 
     /// move the cursor to the direction using hand-over-hand locking
@@ -453,19 +462,29 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
                 Dir::Eq => return Err(()),
             };
 
-            let next_guard = unsafe { next.as_ref().and_then(|n| Some(n.inner.read_lock())) };
-
             if !self.inner_guard.validate() {
                 // Optimistic read lock is failed. Retry
                 self.recover();
                 continue;
             }
 
-            let next_guard = some_or!(next_guard, return Err(()));
+            // since rebalance, should check restrictly on current's parent
+            if let Some((_, parent_read_guard, _)) = self.ancestors.last() {
+                if !parent_read_guard.validate() {
+                    self.recover();
+                    continue;
+                }
+            }
+
+            if next.is_null() {
+                return Err(());
+            }
+
+            let next_guard = unsafe { next.as_ref().unwrap().inner.read_lock() };
 
             // replace with current's read guard, then store parent_guard in cursor
             let parent = mem::replace(&mut self.current, next);
-            let parent_guard = mem::replace(&mut self.inner_guard, next_guard);
+            let parent_guard = mem::replace(&mut self.inner_guard, ManuallyDrop::new(next_guard));
             self.ancestors.push((parent, parent_guard, self.dir));
 
             return Ok(());
@@ -499,10 +518,12 @@ impl<'g, K: Ord, V> Cursor<'g, K, V> {
                 }
             }
 
+            // parent_read_guard.forget();
             cursor.current = parent;
         }
     }
 }
+
 pub struct SeqLockAVLTree<K, V> {
     root: Atomic<Node<K, V>>,
 }
@@ -539,20 +560,17 @@ impl<K, V> Drop for SeqLockAVLTree<K, V> {
 
 impl<K, V> SeqLockAVLTree<K, V> {
     /// get the height of the tree
-    /// Since using read lock without validation for lightweight, it cannot ensure the value.
     pub fn get_height(&self) -> usize {
-        let guard = &pin();
-
         unsafe {
             if let Some(node) = self
                 .root
-                .load(Ordering::Relaxed, guard)
+                .load(Ordering::Relaxed, &pin())
                 .as_ref()
                 .unwrap()
                 .inner
-                .read_lock()
+                .write_lock()
                 .right
-                .load(Ordering::Acquire, guard)
+                .load(Ordering::Acquire, &pin())
                 .as_ref()
             {
                 node.height.load(Ordering::Relaxed) as usize
@@ -584,32 +602,53 @@ where
             cursor.recover();
             cursor.find(key, &guard);
 
-            let write_guard = ok_or!(cursor.inner_guard.clone().upgrade(), continue);
+            let inner_guard = ManuallyDrop::into_inner(cursor.inner_guard.clone());
+
+            let write_guard = if let Ok(guard) = inner_guard.upgrade() {
+                guard
+            } else {
+                continue;
+            };
+
+            if cursor.dir == Dir::Eq && !write_guard.value.load(Ordering::Relaxed, &guard).is_null()
+            {
+                return Err(value);
+            }
+
+            // check if the current is alive now by checking parent node. If disconnected, retry
+            if let Some((_, read_guard, dir)) = cursor.ancestors.last() {
+                if !read_guard.is_same_child(*dir, cursor.current, &guard) || !read_guard.validate()
+                {
+                    // Before inserting, the current is already disconnected.
+                    continue;
+                }
+            }
 
             match cursor.dir {
                 Dir::Left => {
+                    if !write_guard.left.load(Ordering::Relaxed, &guard).is_null() {
+                        continue; // some thread already writed. Retry
+                    }
+
                     let node = Node::new(key.clone(), value);
                     write_guard.left.store(Owned::new(node), Ordering::Relaxed);
                 }
                 Dir::Right => {
+                    if !write_guard.right.load(Ordering::Relaxed, &guard).is_null() {
+                        continue; // some thread already writed. Retry
+                    }
+
                     let node = Node::new(key.clone(), value);
                     write_guard.right.store(Owned::new(node), Ordering::Relaxed);
                 }
                 Dir::Eq => {
-                    // check if the current is alive now by checking parent node. If disconnected, retry
-                    // ex) This node is emptied and a edge node. Then, the upgrade to write_guard can success,
-                    // but on `try_cleanup` this node can be disconnected from the parent.
-                    if !cursor.ancestors.last().unwrap().1.validate() {
-                        continue;
-                    }
-
                     if !write_guard.value.load(Ordering::Relaxed, &guard).is_null() {
                         return Err(value);
                     }
 
                     write_guard
                         .value
-                        .swap(Owned::new(value), Ordering::Relaxed, &guard);
+                        .swap(Owned::new(value), Ordering::Release, &guard);
                 }
             }
 
@@ -634,9 +673,14 @@ where
             cursor.find(key, &guard);
 
             if cursor.dir == Dir::Eq {
-                let write_guard = ok_or!(cursor.inner_guard.clone().upgrade(), continue);
+                let inner_guard = ManuallyDrop::into_inner(cursor.inner_guard.clone());
+                let write_guard = if let Ok(write_guard) = inner_guard.upgrade() {
+                    write_guard
+                } else {
+                    continue;
+                };
 
-                return unsafe { f(write_guard.value.load(Ordering::Relaxed, &guard).as_ref()) };
+                return unsafe { f(write_guard.value.load(Ordering::Acquire, &guard).as_ref()) };
             } else {
                 return f(None);
             }
@@ -660,7 +704,7 @@ where
                     cursor
                         .inner_guard
                         .value
-                        .load(Ordering::Relaxed, &guard)
+                        .load(Ordering::Acquire, &guard)
                         .as_ref()
                         .cloned()
                 };
@@ -685,24 +729,26 @@ where
             cursor.recover();
             cursor.find(key, &guard);
 
-            let value_is_null = cursor
-                .inner_guard
-                .value
-                .load(Ordering::Relaxed, &guard)
-                .is_null();
-
-            if cursor.dir != Dir::Eq || (value_is_null && cursor.inner_guard.validate()) {
+            if cursor.dir != Dir::Eq {
                 return Err(());
             }
 
-            let write_guard = ok_or!(cursor.inner_guard.clone().upgrade(), continue);
+            let inner_guard = ManuallyDrop::into_inner(cursor.inner_guard.clone());
+            let write_guard = if let Ok(guard) = inner_guard.upgrade() {
+                guard
+            } else {
+                continue;
+            };
 
             let value = write_guard
                 .value
-                .swap(Shared::null(), Ordering::Relaxed, &guard);
+                .swap(Shared::null(), Ordering::Acquire, &guard);
+
+            if value.is_null() {
+                return Err(());
+            }
 
             drop(write_guard);
-
             Cursor::repair(cursor, &guard);
 
             return unsafe { Ok(*(value.into_owned().into_box())) };
