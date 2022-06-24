@@ -1,10 +1,18 @@
+mod lock;
 mod lockfree;
 
-pub use lockfree::ConcurrentStack;
+pub use lock::MutexStack;
+pub use lock::SpinLockStack;
 pub use lockfree::EBStack;
 pub use lockfree::TreiberStack;
 
 use std::mem;
+
+pub trait ConcurrentStack<V> {
+    fn new() -> Self;
+    fn push(&self, value: V);
+    fn pop(&self) -> Option<V>;
+}
 
 // simple sequential stack
 pub struct Stack<V> {

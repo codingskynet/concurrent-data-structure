@@ -1,7 +1,6 @@
 use cds::map::ConcurrentMap;
 use cds::map::SequentialMap;
 use cds::util::random::Random;
-use crossbeam_epoch::pin;
 use crossbeam_utils::thread;
 use rand::prelude::SliceRandom;
 use rand::prelude::ThreadRng;
@@ -168,11 +167,11 @@ where
     }
 
     fn insert(&mut self, key: &K, value: V) -> Result<(), V> {
-        self.inner.insert(key, value, &pin())
+        self.inner.insert(key, value)
     }
 
     fn lookup(&self, key: &K) -> Option<&V> {
-        let value = self.inner.get(key, &pin());
+        let value = self.inner.get(key);
 
         // HACK: temporarily save the value, and get its reference safely
         unsafe {
@@ -182,7 +181,7 @@ where
     }
 
     fn remove(&mut self, key: &K) -> Result<V, ()> {
-        self.inner.remove(key, &pin())
+        self.inner.remove(key)
     }
 }
 
@@ -238,7 +237,7 @@ where
                         Operation::Insert => {
                             let value = u64::gen(&mut rng);
                             let start = Instant::now();
-                            let result = match map.insert(&key, value, &pin()) {
+                            let result = match map.insert(&key, value) {
                                 Ok(()) => Ok(value),
                                 Err(_) => Err(()),
                             };
@@ -248,7 +247,7 @@ where
                         }
                         Operation::Lookup => {
                             let start = Instant::now();
-                            let result = match map.get(&key, &pin()) {
+                            let result = match map.get(&key) {
                                 Some(value) => Ok(value),
                                 None => Err(()),
                             };
@@ -258,7 +257,7 @@ where
                         }
                         Operation::Remove => {
                             let start = Instant::now();
-                            let result = map.remove(&key, &pin());
+                            let result = map.remove(&key);
                             let end = Instant::now();
 
                             (start, result, end)

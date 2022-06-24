@@ -71,7 +71,7 @@ impl<K: Debug, V: Debug> Debug for Node<K, V> {
 
 impl<K, V> Node<K, V> {
     // since most of MaybeUnit APIs are experimental, I use very dangerous `mem::uninitialized until they become stable
-    #[allow(deprecated)]
+    #[allow(deprecated, invalid_value)]
     fn new() -> Self {
         Self {
             size: 0,
@@ -1062,8 +1062,7 @@ impl<K: Ord, V> BTree<K, V> {
     }
 }
 
-impl<K: Ord + Clone, V> SequentialMap<K, V> for BTree<K, V>
-{
+impl<K: Ord + Clone, V> SequentialMap<K, V> for BTree<K, V> {
     fn new() -> Self {
         let root = Box::leak(Box::new(Node::new())).into();
 
