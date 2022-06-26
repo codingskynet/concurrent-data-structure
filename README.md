@@ -16,7 +16,7 @@ Implement sequential, lock-based and lock-free concurrent data structures below:
 - Implement [Elimination-Backoff Stack](https://people.csail.mit.edu/shanir/publications/Lock_Free.pdf)
 
 ### Queue
-TODO: implement Michael-Scott queue
+- Implement [Michael-Scott queue](https://www.cs.rochester.edu/~scott/papers/1996_PODC_queues.pdf)
 
 ### Linked List
 TODO: implement Harris linked list
@@ -38,3 +38,4 @@ TODO: ?
 - https://www.cs.cmu.edu/~yihans/papers/tutorial.pdf
 - https://dominoweb.draco.res.ibm.com/58319a2ed2b1078985257003004617ef.html
 - https://people.csail.mit.edu/shanir/publications/Lock_Free.pdf
+- https://www.cs.rochester.edu/~scott/papers/1996_PODC_queues.pdf

@@ -1,4 +1,17 @@
+mod lockfree;
+
+pub use lockfree::MSQueue;
+
 use std::{mem, ptr::null};
+
+pub trait ConcurrentQueue<V> {
+    fn new() -> Self;
+    fn push(&self, value: V);
+    // non-blocking pop that can return `None` when the queue is observed as Empty.
+    fn try_pop(&self) -> Option<V>;
+    // blocking pop that can wait for returing value.
+    fn pop(&self) -> V;
+}
 
 // simple sequential queue
 pub struct Queue<V> {
