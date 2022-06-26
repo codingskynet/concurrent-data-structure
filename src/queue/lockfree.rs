@@ -7,12 +7,13 @@
 use std::{mem::MaybeUninit, ptr, sync::atomic::Ordering};
 
 use crossbeam_epoch::{pin, unprotected, Atomic, Owned, Shared};
+use crossbeam_utils::CachePadded;
 
 use super::ConcurrentQueue;
 
 pub struct MSQueue<V> {
-    head: Atomic<Node<V>>,
-    tail: Atomic<Node<V>>,
+    head: CachePadded<Atomic<Node<V>>>,
+    tail: CachePadded<Atomic<Node<V>>>,
 }
 
 struct Node<V> {
@@ -32,8 +33,8 @@ impl<V> Node<V> {
 impl<V> ConcurrentQueue<V> for MSQueue<V> {
     fn new() -> Self {
         let queue = Self {
-            head: Atomic::null(),
-            tail: Atomic::null(),
+            head: CachePadded::new(Atomic::null()),
+            tail: CachePadded::new(Atomic::null()),
         };
 
         // store dummy node into both head and tail

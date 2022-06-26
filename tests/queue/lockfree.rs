@@ -51,5 +51,5 @@ fn test_ms_queue_mpmc() {
     })
     .unwrap();
 
-    // assert!(queue.try_pop().is_none());
+    assert!(queue.try_pop().is_none());
 }
