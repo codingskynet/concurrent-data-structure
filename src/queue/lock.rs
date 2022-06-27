@@ -2,10 +2,8 @@ use std::{
     mem::{self, MaybeUninit},
     ops::DerefMut,
     ptr::NonNull,
-    sync::atomic::Ordering,
 };
 
-use crossbeam_epoch::{pin, unprotected, Atomic, Owned};
 use crossbeam_utils::Backoff;
 
 use super::ConcurrentQueue;
@@ -63,11 +61,11 @@ impl<V> ConcurrentQueue<V> for TwoSpinLockQueue<V> {
 
             let head_ref = lock_guard.as_mut();
 
-            if let Some(next) = head_ref.next {
-                let node = mem::replace(&mut head_ref.next, next.as_ref().next);
-                let node = Box::from_raw(node.unwrap().as_ptr());
+            if let Some(mut next) = head_ref.next {
+                let value = mem::replace(&mut next.as_mut().value, MaybeUninit::uninit());
+                *lock_guard.deref_mut() = next;
 
-                Some(node.value.assume_init())
+                Some(value.assume_init())
             } else {
                 None
             }

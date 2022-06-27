@@ -2,6 +2,25 @@ use cds::queue::{ConcurrentQueue, TwoSpinLockQueue};
 use crossbeam_utils::thread::scope;
 
 #[test]
+fn test_two_spin_lock_queue_simple() {
+    let queue = TwoSpinLockQueue::new();
+
+    scope(|scope| {
+        for _ in 0..10 {
+            scope.spawn(|_| {
+                for i in 0..1_000 {
+                    queue.push(i);
+                    queue.pop();
+                }
+            });
+        }
+    })
+    .unwrap();
+
+    assert!(queue.try_pop().is_none());
+}
+
+#[test]
 fn test_two_spin_lock_queue_spsc() {
     let queue = TwoSpinLockQueue::new();
 
