@@ -55,6 +55,30 @@ fn test_ms_queue_spmc() {
 }
 
 #[test]
+fn test_ms_queue_mpsc() {
+    let queue = MSQueue::new();
+
+    scope(|scope| {
+        for _ in 0..10 {
+            scope.spawn(|_| {
+                for i in 0..100_000 {
+                    queue.push(i);
+                }
+            });
+        }
+
+        scope.spawn(|_| {
+            for _ in 0..1_000_000 {
+                queue.pop();
+            }
+        });
+    })
+    .unwrap();
+
+    assert!(queue.try_pop().is_none());
+}
+
+#[test]
 fn test_ms_queue_mpmc() {
     let queue = MSQueue::new();
 

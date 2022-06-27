@@ -1,4 +1,4 @@
-use std::{mem::MaybeUninit, ptr::NonNull, sync::atomic::Ordering};
+use std::{mem::MaybeUninit, sync::atomic::Ordering};
 
 use crossbeam_epoch::{unprotected, Atomic, Owned};
 use crossbeam_utils::Backoff;
@@ -26,11 +26,6 @@ impl<V> Node<V> {
             value,
             next: Atomic::null(),
         }
-    }
-
-    fn new_non_null(value: MaybeUninit<V>) -> NonNull<Self> {
-        let node = Box::new(Node::new(value));
-        NonNull::new(Box::leak(node)).unwrap()
     }
 }
 
