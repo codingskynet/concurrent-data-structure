@@ -1,5 +1,7 @@
+mod lock;
 mod lockfree;
 
+pub use lock::TwoSpinLockQueue;
 pub use lockfree::MSQueue;
 
 use std::{mem, ptr::null};

@@ -7,7 +7,7 @@
 use std::{mem::MaybeUninit, ptr, sync::atomic::Ordering};
 
 use crossbeam_epoch::{pin, unprotected, Atomic, Owned, Shared};
-use crossbeam_utils::CachePadded;
+use crossbeam_utils::{Backoff, CachePadded};
 
 use super::ConcurrentQueue;
 
@@ -143,11 +143,15 @@ impl<V> ConcurrentQueue<V> for MSQueue<V> {
     }
 
     fn pop(&self) -> V {
+        let backoff = Backoff::new();
+
         loop {
             match self.try_pop() {
                 Some(value) => return value,
                 None => {}
             }
+
+            backoff.spin();
         }
     }
 }

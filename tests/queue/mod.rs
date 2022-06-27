@@ -1,3 +1,4 @@
+mod lock;
 mod lockfree;
 
 use cds::queue::Queue;
