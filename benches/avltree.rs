@@ -1,10 +1,10 @@
+mod util;
+
 use std::time::Duration;
 
 use cds::avltree::SeqLockAVLTree;
 use criterion::{criterion_group, Criterion};
 use criterion::{criterion_main, SamplingMode, Throughput};
-
-mod util;
 
 use util::concurrent::{
     criterion_flat_bench_mixed_concurrent_map, criterion_linear_bench_mixed_concurrent_map,

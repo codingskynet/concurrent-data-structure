@@ -1,11 +1,11 @@
+mod util;
+
 use std::time::{Duration, Instant};
 
 use cds::stack::{EBStack, MutexStack, SpinLockStack, Stack, TreiberStack};
 use criterion::{black_box, criterion_group, Criterion};
 use criterion::{criterion_main, SamplingMode, Throughput};
 use rand::{thread_rng, Rng};
-
-mod util;
 
 use util::concurrent::{bench_mixed_concurrent_stack, get_test_thread_nums};
 
