@@ -92,5 +92,9 @@ impl<V> Queue<V> {
 impl<V> Drop for Queue<V> {
     fn drop(&mut self) {
         while self.pop().is_some() {}
+
+        unsafe {
+            drop(Box::from_raw(self.head.as_ptr()));
+        }
     }
 }
