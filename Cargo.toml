@@ -14,9 +14,17 @@ criterion = "0.3.4"
 num_cpus = "1.13.0"
 
 [[bench]]
-name = "sequential"
+name = "stack"
 harness = false
 
 [[bench]]
-name = "concurrent"
+name = "queue"
+harness = false
+
+[[bench]]
+name = "avltree"
+harness = false
+
+[[bench]]
+name = "btree"
 harness = false
