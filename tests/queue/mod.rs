@@ -1,5 +1,6 @@
-mod lock;
 mod lockfree;
+mod mutex;
+mod spinlock;
 
 use cds::queue::Queue;
 

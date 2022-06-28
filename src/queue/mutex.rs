@@ -2,36 +2,33 @@ use std::{
     mem::{self, MaybeUninit},
     ops::DerefMut,
     ptr::NonNull,
+    sync::Mutex,
 };
 
 use crossbeam_utils::{Backoff, CachePadded};
 
 use super::{ConcurrentQueue, Queue};
 
-use crate::lock::spinlock::SpinLock;
-
-pub struct SpinLockQueue<V> {
-    queue: SpinLock<Queue<V>>,
+pub struct MutexQueue<V> {
+    queue: Mutex<Queue<V>>,
 }
 
-unsafe impl<T: Send> Send for SpinLockQueue<T> {}
-unsafe impl<T: Send> Sync for SpinLockQueue<T> {}
+unsafe impl<T: Send> Send for MutexQueue<T> {}
+unsafe impl<T: Send> Sync for MutexQueue<T> {}
 
-impl<V> ConcurrentQueue<V> for SpinLockQueue<V> {
+impl<V> ConcurrentQueue<V> for MutexQueue<V> {
     fn new() -> Self {
         Self {
-            queue: SpinLock::new(Queue::new()),
+            queue: Mutex::new(Queue::new()),
         }
     }
 
     fn push(&self, value: V) {
-        let mut lock_guard = self.queue.lock();
-        lock_guard.push(value);
+        self.queue.lock().unwrap().push(value);
     }
 
     fn try_pop(&self) -> Option<V> {
-        let mut lock_guard = self.queue.lock();
-        lock_guard.pop()
+        self.queue.lock().unwrap().pop()
     }
 
     fn pop(&self) -> V {
@@ -48,13 +45,13 @@ impl<V> ConcurrentQueue<V> for SpinLockQueue<V> {
     }
 }
 
-pub struct TwoSpinLockQueue<V> {
-    head: CachePadded<SpinLock<NonNull<Node<V>>>>,
-    tail: CachePadded<SpinLock<NonNull<Node<V>>>>,
+pub struct TwoMutexQueue<V> {
+    head: CachePadded<Mutex<NonNull<Node<V>>>>,
+    tail: CachePadded<Mutex<NonNull<Node<V>>>>,
 }
 
-unsafe impl<T: Send> Send for TwoSpinLockQueue<T> {}
-unsafe impl<T: Send> Sync for TwoSpinLockQueue<T> {}
+unsafe impl<T: Send> Send for TwoMutexQueue<T> {}
+unsafe impl<T: Send> Sync for TwoMutexQueue<T> {}
 
 struct Node<V> {
     value: MaybeUninit<V>,
@@ -72,20 +69,20 @@ impl<V> Node<V> {
     }
 }
 
-impl<V> ConcurrentQueue<V> for TwoSpinLockQueue<V> {
+impl<V> ConcurrentQueue<V> for TwoMutexQueue<V> {
     fn new() -> Self {
         let dummy = Node::new_non_null(MaybeUninit::uninit());
 
         Self {
-            head: CachePadded::new(SpinLock::new(dummy)),
-            tail: CachePadded::new(SpinLock::new(dummy)),
+            head: CachePadded::new(Mutex::new(dummy)),
+            tail: CachePadded::new(Mutex::new(dummy)),
         }
     }
 
     fn push(&self, value: V) {
         let node = Node::new_non_null(MaybeUninit::new(value));
 
-        let mut lock_guard = self.tail.lock();
+        let mut lock_guard = self.tail.lock().unwrap();
 
         unsafe {
             lock_guard.as_mut().next = Some(node);
@@ -95,7 +92,7 @@ impl<V> ConcurrentQueue<V> for TwoSpinLockQueue<V> {
 
     fn try_pop(&self) -> Option<V> {
         unsafe {
-            let mut lock_guard = self.head.lock();
+            let mut lock_guard = self.head.lock().unwrap();
 
             let head_ref = lock_guard.as_mut();
 
@@ -124,7 +121,7 @@ impl<V> ConcurrentQueue<V> for TwoSpinLockQueue<V> {
     }
 }
 
-impl<V> Drop for TwoSpinLockQueue<V> {
+impl<V> Drop for TwoMutexQueue<V> {
     fn drop(&mut self) {
         while let Some(_) = self.try_pop() {}
     }

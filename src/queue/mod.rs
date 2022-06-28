@@ -1,9 +1,12 @@
-mod lock;
 mod lockfree;
+mod mutex;
+mod spinlock;
 
-pub use lock::SpinLockQueue;
-pub use lock::TwoSpinLockQueue;
 pub use lockfree::MSQueue;
+pub use mutex::MutexQueue;
+pub use mutex::TwoMutexQueue;
+pub use spinlock::SpinLockQueue;
+pub use spinlock::TwoSpinLockQueue;
 
 use std::{mem, ptr::null};
 
