@@ -11,18 +11,20 @@ Implement sequential, lock-based and lock-free concurrent data structures below:
 
 ## Detail
 ### Stack
-- Implement Lock Stack(based on std::sync::Mutex and spin lock)
-- Implement [Treiber's Stack](https://dominoweb.draco.res.ibm.com/58319a2ed2b1078985257003004617ef.html)
-- Implement [Elimination-Backoff Stack](https://people.csail.mit.edu/shanir/publications/Lock_Free.pdf)
+- Lock Stack(based on std::sync::Mutex and spin lock)
+- [Treiber's Stack](https://dominoweb.draco.res.ibm.com/58319a2ed2b1078985257003004617ef.html)
+- [Elimination-Backoff Stack](https://people.csail.mit.edu/shanir/publications/Lock_Free.pdf)
 
 ### Queue
-- Implement [Michael-Scott queue](https://www.cs.rochester.edu/~scott/papers/1996_PODC_queues.pdf)
+- Lock Queue(based on std::sync::Mutex and spin lock)
+- [Two Lock Queue](https://www.cs.rochester.edu/~scott/papers/1996_PODC_queues.pdf)
+- [Michael-Scott queue](https://www.cs.rochester.edu/~scott/papers/1996_PODC_queues.pdf)
 
 ### Linked List
 TODO: implement Harris linked list
 
 ### AVL Tree
-- Implement concurrent AVL Tree with RwLock(crossbeam_utils::sync::ShardedLock), SeqLock
+- concurrent AVL tree with RwLock(crossbeam_utils::sync::ShardedLock), SeqLock
 
 ### B-Tree
 TODO: ?
