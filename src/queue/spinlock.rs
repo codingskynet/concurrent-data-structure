@@ -7,7 +7,7 @@ use std::{
 
 use crossbeam_utils::{Backoff, CachePadded};
 
-use super::{ConcurrentQueue, Queue};
+use super::{ConcurrentQueue, Node, Queue};
 
 use crate::lock::spinlock::SpinLock;
 
@@ -58,22 +58,6 @@ pub struct TwoSpinLockQueue<V> {
 
 unsafe impl<T: Send> Send for TwoSpinLockQueue<T> {}
 unsafe impl<T: Send> Sync for TwoSpinLockQueue<T> {}
-
-struct Node<V> {
-    value: MaybeUninit<V>,
-    next: Option<NonNull<Node<V>>>,
-}
-
-impl<V> Node<V> {
-    fn new(value: MaybeUninit<V>) -> Self {
-        Self { value, next: None }
-    }
-
-    fn new_non_null(value: MaybeUninit<V>) -> NonNull<Self> {
-        let node = Box::new(Self::new(value));
-        NonNull::new(Box::leak(node)).unwrap()
-    }
-}
 
 impl<V> ConcurrentQueue<V> for TwoSpinLockQueue<V> {
     fn new() -> Self {
@@ -130,5 +114,9 @@ impl<V> ConcurrentQueue<V> for TwoSpinLockQueue<V> {
 impl<V> Drop for TwoSpinLockQueue<V> {
     fn drop(&mut self) {
         while let Some(_) = self.try_pop() {}
+
+        unsafe {
+            drop(Box::from_raw(self.head.lock().as_ptr()));
+        }
     }
 }

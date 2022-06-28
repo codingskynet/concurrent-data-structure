@@ -8,7 +8,7 @@ pub use mutex::TwoMutexQueue;
 pub use spinlock::SpinLockQueue;
 pub use spinlock::TwoSpinLockQueue;
 
-use std::{mem, ptr::null};
+use std::{mem, mem::MaybeUninit, ptr::NonNull};
 
 pub trait ConcurrentQueue<V> {
     fn new() -> Self;
@@ -21,63 +21,71 @@ pub trait ConcurrentQueue<V> {
 
 // simple sequential queue
 pub struct Queue<V> {
-    head: Option<Box<Node<V>>>,
-    tail: *mut Box<Node<V>>,
+    head: NonNull<Node<V>>,
+    tail: NonNull<Node<V>>,
 }
 
 struct Node<V> {
-    value: V,
-    next: Option<Box<Node<V>>>,
+    value: MaybeUninit<V>,
+    next: Option<NonNull<Node<V>>>,
 }
 
 impl<V> Node<V> {
-    fn new(value: V) -> Node<V> {
-        Node { value, next: None }
+    fn new(value: MaybeUninit<V>) -> Self {
+        Self { value, next: None }
+    }
+
+    fn new_non_null(value: MaybeUninit<V>) -> NonNull<Self> {
+        let node = Box::new(Self::new(value));
+        NonNull::new(Box::leak(node)).unwrap()
     }
 }
 
 impl<V> Queue<V> {
     pub fn new() -> Queue<V> {
-        Queue {
-            head: None,
-            tail: null::<V>() as *mut _,
+        let dummy = Node::new_non_null(MaybeUninit::uninit());
+
+        Self {
+            head: dummy,
+            tail: dummy,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.head.is_none()
+        unsafe { self.head.as_ref().next.is_none() }
     }
 
     pub fn top(&self) -> Option<&V> {
-        match &self.head {
-            Some(node) => Some(&node.as_ref().value),
-            None => None,
-        }
-    }
-
-    pub fn push(&mut self, value: V) {
-        let node = Box::new(Node::new(value));
-
-        if self.head.is_none() {
-            self.head = Some(node);
-            self.tail = self.head.as_mut().unwrap() as *mut _;
-        } else {
-            unsafe {
-                (*self.tail).next = Some(node);
-                self.tail = (*self.tail).next.as_mut().unwrap() as *mut _;
+        unsafe {
+            match self.head.as_ref().next.as_ref() {
+                Some(node) => Some(node.as_ref().value.assume_init_ref()),
+                None => None,
             }
         }
     }
 
+    pub fn push(&mut self, value: V) {
+        let node = Node::new_non_null(MaybeUninit::new(value));
+
+        let tail = unsafe { self.tail.as_mut() };
+
+        tail.next = Some(node);
+        self.tail = node;
+    }
+
     pub fn pop(&mut self) -> Option<V> {
-        if self.head.is_some() {
-            let mut top = mem::replace(&mut self.head, None);
-            self.head = mem::replace(&mut top.as_mut().unwrap().next, None);
+        unsafe {
+            let head = self.head.as_mut();
 
-            return Some(top.unwrap().value);
+            if let Some(mut next) = head.next {
+                let value = mem::replace(&mut next.as_mut().value, MaybeUninit::uninit());
+                self.head = next;
+
+                Some(value.assume_init())
+            } else {
+                None
+            }
         }
-
-        None
     }
 }
 
