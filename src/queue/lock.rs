@@ -4,15 +4,53 @@ use std::{
     ptr::NonNull,
 };
 
-use crossbeam_utils::Backoff;
+use crossbeam_utils::{Backoff, CachePadded};
 
-use super::ConcurrentQueue;
+use super::{ConcurrentQueue, Queue};
 
 use crate::lock::spinlock::SpinLock;
 
+pub struct SpinLockQueue<V> {
+    queue: SpinLock<Queue<V>>,
+}
+
+unsafe impl<T: Send> Send for SpinLockQueue<T> {}
+unsafe impl<T: Send> Sync for SpinLockQueue<T> {}
+
+impl<V> ConcurrentQueue<V> for SpinLockQueue<V> {
+    fn new() -> Self {
+        Self {
+            queue: SpinLock::new(Queue::new()),
+        }
+    }
+
+    fn push(&self, value: V) {
+        let mut lock_guard = self.queue.lock();
+        lock_guard.push(value);
+    }
+
+    fn try_pop(&self) -> Option<V> {
+        let mut lock_guard = self.queue.lock();
+        lock_guard.pop()
+    }
+
+    fn pop(&self) -> V {
+        let backoff = Backoff::new();
+
+        loop {
+            match self.try_pop() {
+                Some(value) => return value,
+                None => {}
+            }
+
+            backoff.snooze();
+        }
+    }
+}
+
 pub struct TwoSpinLockQueue<V> {
-    head: SpinLock<NonNull<Node<V>>>,
-    tail: SpinLock<NonNull<Node<V>>>,
+    head: CachePadded<SpinLock<NonNull<Node<V>>>>,
+    tail: CachePadded<SpinLock<NonNull<Node<V>>>>,
 }
 
 unsafe impl<T: Send> Send for TwoSpinLockQueue<T> {}
@@ -39,8 +77,8 @@ impl<V> ConcurrentQueue<V> for TwoSpinLockQueue<V> {
         let dummy = Node::new_non_null(MaybeUninit::uninit());
 
         Self {
-            head: SpinLock::new(dummy),
-            tail: SpinLock::new(dummy),
+            head: CachePadded::new(SpinLock::new(dummy)),
+            tail: CachePadded::new(SpinLock::new(dummy)),
         }
     }
 
@@ -81,7 +119,7 @@ impl<V> ConcurrentQueue<V> for TwoSpinLockQueue<V> {
                 None => {}
             }
 
-            backoff.spin();
+            backoff.snooze();
         }
     }
 }

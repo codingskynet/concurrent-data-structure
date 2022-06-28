@@ -1,6 +1,7 @@
 mod lock;
 mod lockfree;
 
+pub use lock::SpinLockQueue;
 pub use lock::TwoSpinLockQueue;
 pub use lockfree::MSQueue;
 

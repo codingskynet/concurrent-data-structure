@@ -1,4 +1,4 @@
-use std::ops::{Deref, DerefMut};
+use std::ops::DerefMut;
 
 use cds::lock::SpinLock;
 use crossbeam_utils::thread::scope;
