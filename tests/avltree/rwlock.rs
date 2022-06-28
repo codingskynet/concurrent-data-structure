@@ -1,6 +1,6 @@
 use cds::{avltree::RwLockAVLTree, map::ConcurrentMap};
 
-use crate::util::map::{stress_concurrent, stress_concurrent_as_sequential};
+use crate::util::map::stress_concurrent_as_sequential;
 
 #[test]
 fn test_rwlock_avl_tree() {

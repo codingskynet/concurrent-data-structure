@@ -11,7 +11,10 @@ use std::mem;
 pub trait ConcurrentStack<V> {
     fn new() -> Self;
     fn push(&self, value: V);
-    fn pop(&self) -> Option<V>;
+    // non-blocking pop that can return `None` when the stack is observed as Empty.
+    fn try_pop(&self) -> Option<V>;
+    // blocking pop that can wait for returing value.
+    fn pop(&self) -> V;
 }
 
 // simple sequential stack

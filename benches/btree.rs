@@ -1,14 +1,13 @@
-use std::time::Duration;
-
-use criterion::{criterion_main, SamplingMode, Throughput};
-
 mod util;
 
-use cds::{avltree::AVLTree, btree::BTree};
-use criterion::{criterion_group, Criterion};
-use util::sequential::fuzz_sequential_logs;
+use std::time::Duration;
 
-use crate::util::sequential::{bench_logs_btreemap, bench_logs_sequential_map};
+use criterion::{criterion_group, Criterion};
+use criterion::{criterion_main, SamplingMode, Throughput};
+
+use cds::{avltree::AVLTree, btree::BTree};
+
+use util::sequential::{bench_logs_btreemap, bench_logs_sequential_map, fuzz_sequential_logs};
 
 const MAP_ALREADY_INSERTED: u64 = 500_000;
 const MAP_TOTAL_OPS: usize = 192_000;

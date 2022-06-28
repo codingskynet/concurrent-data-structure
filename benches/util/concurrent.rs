@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use cds::{map::ConcurrentMap, stack::ConcurrentStack};
+use cds::{map::ConcurrentMap, queue::ConcurrentQueue, stack::ConcurrentStack};
 use criterion::{black_box, measurement::WallTime, BenchmarkGroup};
 use crossbeam_utils::thread;
 use rand::{prelude::SliceRandom, thread_rng, Rng};
@@ -63,7 +63,71 @@ pub fn bench_mixed_concurrent_stack<S>(
                                     duration += start.elapsed();
                                 } else {
                                     let start = Instant::now();
-                                    let _ = black_box(stack.pop());
+                                    let _ = black_box(stack.try_pop());
+                                    duration += start.elapsed();
+                                }
+                            }
+
+                            duration
+                        });
+
+                        threads.push(t);
+                    }
+
+                    threads
+                        .into_iter()
+                        .map(|h| h.join().unwrap())
+                        .collect::<Vec<_>>()
+                        .iter()
+                        .sum::<Duration>()
+                })
+                .unwrap();
+
+                duration += batched_time
+            }
+
+            // avg thread time
+            duration / (thread_num as u32)
+        });
+    });
+}
+
+pub fn bench_mixed_concurrent_queue<S>(
+    push: usize,
+    pop: usize,
+    thread_num: usize,
+    c: &mut BenchmarkGroup<WallTime>,
+) where
+    S: Sync + ConcurrentQueue<u64>,
+{
+    let per_ops = push + pop;
+
+    c.bench_function(&format!("{} threads", thread_num,), |b| {
+        b.iter_custom(|iters| {
+            let stack = S::new();
+
+            let mut duration = Duration::ZERO;
+            for _ in 0..iters {
+                let batched_time = thread::scope(|s| {
+                    let mut threads = Vec::new();
+
+                    for _ in 0..thread_num {
+                        let t = s.spawn(|_| {
+                            let mut rng = thread_rng();
+                            let mut duration = Duration::ZERO;
+
+                            for _ in 0..per_ops {
+                                let op_idx = rng.gen_range(0..per_ops);
+
+                                if op_idx < push {
+                                    let value: u64 = rng.gen();
+
+                                    let start = Instant::now();
+                                    let _ = black_box(stack.push(value));
+                                    duration += start.elapsed();
+                                } else {
+                                    let start = Instant::now();
+                                    let _ = black_box(stack.try_pop());
                                     duration += start.elapsed();
                                 }
                             }

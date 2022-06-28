@@ -10,12 +10,12 @@ fn test_mutex_stack() {
             scope.spawn(|_| {
                 for i in 0..10_000 {
                     stack.push(i);
-                    assert!(stack.pop().is_some());
+                    assert!(stack.try_pop().is_some());
                 }
             });
         }
     })
     .unwrap();
 
-    assert!(stack.pop().is_none());
+    assert!(stack.try_pop().is_none());
 }

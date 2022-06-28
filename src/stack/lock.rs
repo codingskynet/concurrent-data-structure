@@ -1,35 +1,46 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
+
+use crossbeam_utils::Backoff;
 
 use crate::lock::spinlock::SpinLock;
 
 use super::{ConcurrentStack, Stack};
 
 pub struct MutexStack<V> {
-    stack: Arc<Mutex<Stack<V>>>,
+    stack: Mutex<Stack<V>>,
 }
 
 impl<V> ConcurrentStack<V> for MutexStack<V> {
     fn new() -> Self {
         Self {
-            stack: Arc::new(Mutex::new(Stack::new())),
+            stack: Mutex::new(Stack::new()),
         }
     }
 
     fn push(&self, value: V) {
-        let guard = self.stack.clone();
-
-        guard.lock().unwrap().push(value);
+        self.stack.lock().unwrap().push(value);
     }
 
-    fn pop(&self) -> Option<V> {
-        let guard = self.stack.clone();
-
-        let value = match guard.lock() {
+    fn try_pop(&self) -> Option<V> {
+        let value = match self.stack.lock() {
             Ok(mut guard) => guard.pop(),
             Err(_) => unreachable!(),
         };
 
         value
+    }
+
+    fn pop(&self) -> V {
+        let backoff = Backoff::new();
+
+        loop {
+            match self.try_pop() {
+                Some(value) => return value,
+                None => {}
+            }
+
+            backoff.snooze();
+        }
     }
 }
 
@@ -50,9 +61,22 @@ impl<V> ConcurrentStack<V> for SpinLockStack<V> {
         guard.push(value);
     }
 
-    fn pop(&self) -> Option<V> {
+    fn try_pop(&self) -> Option<V> {
         let mut guard = self.stack.lock();
 
         guard.pop()
+    }
+
+    fn pop(&self) -> V {
+        let backoff = Backoff::new();
+
+        loop {
+            match self.try_pop() {
+                Some(value) => return value,
+                None => {}
+            }
+
+            backoff.snooze();
+        }
     }
 }
