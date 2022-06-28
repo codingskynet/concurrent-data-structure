@@ -3,10 +3,10 @@ use std::time::{Duration, Instant};
 use cds::queue::{MSQueue, MutexQueue, Queue, SpinLockQueue, TwoMutexQueue, TwoSpinLockQueue};
 use criterion::{black_box, criterion_group, Criterion};
 use criterion::{criterion_main, SamplingMode, Throughput};
+use rand::{thread_rng, Rng};
 
 mod util;
 
-use rand::{thread_rng, Rng};
 use util::concurrent::{bench_mixed_concurrent_queue, get_test_thread_nums};
 
 const QUEUE_PER_OPS: usize = 10_000;
