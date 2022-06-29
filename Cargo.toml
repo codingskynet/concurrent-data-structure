@@ -8,6 +8,7 @@ edition = "2018"
 crossbeam-epoch = "0.9.5"
 crossbeam-utils = "0.8.5"
 rand = "0.8.4"
+arr_macro = "0.1.3"
 
 [dev-dependencies]
 criterion = "0.3.4"

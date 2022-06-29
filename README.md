@@ -10,6 +10,10 @@ Implement sequential, lock-based and lock-free concurrent data structures below:
 | Lock-free  | Done  | Done  |             |          |        |
 
 ## Detail
+### Lock
+- Common SpinLock and SeqLock
+- [Flat Combining Lock](https://people.csail.mit.edu/shanir/publications/Flat%20Combining%20SPAA%2010.pdf)
+
 ### Stack
 - Lock Stack(based on std::sync::Mutex and spin lock)
 - [Treiber's Stack](https://dominoweb.draco.res.ibm.com/58319a2ed2b1078985257003004617ef.html)

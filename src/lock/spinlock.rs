@@ -11,13 +11,13 @@ pub struct RawSpinLock {
 }
 
 impl RawSpinLock {
-    const fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             flag: AtomicBool::new(false),
         }
     }
 
-    fn lock(&self) {
+    pub fn lock(&self) {
         let backoff = Backoff::new();
 
         while self
@@ -29,7 +29,7 @@ impl RawSpinLock {
         }
     }
 
-    fn unlock(&self) {
+    pub fn unlock(&self) {
         self.flag.store(false, Ordering::Release);
     }
 }

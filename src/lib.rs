@@ -1,3 +1,4 @@
+#![feature(thread_id_value)]
 pub mod avltree;
 pub mod btree;
 pub mod linkedlist;
