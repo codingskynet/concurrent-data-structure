@@ -12,6 +12,7 @@ rand = "0.8.4"
 [dev-dependencies]
 criterion = "0.3.4"
 num_cpus = "1.13.0"
+crossbeam-queue = "0.3.5"
 
 [[bench]]
 name = "stack"
