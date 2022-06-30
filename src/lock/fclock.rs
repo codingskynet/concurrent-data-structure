@@ -66,7 +66,7 @@ impl<T> Record<T> {
     }
 }
 
-const MAX_THREAD_NUM: usize = 40;
+const MAX_THREAD_NUM: usize = 14;
 
 pub struct FCLock<T> {
     publications: SyncUnsafeCell<[Record<T>; MAX_THREAD_NUM + 1]>,
@@ -115,7 +115,7 @@ impl<T> FCLock<T> {
 
     pub fn new(target: Box<dyn FlatCombining<T>>) -> Self {
         Self {
-            publications: SyncUnsafeCell::new(arr![Record::default(); 41]), // TODO: how to improve?
+            publications: SyncUnsafeCell::new(arr![Record::default(); 15]), // TODO: how to improve?
             lock: RawSpinLock::new(),
             target: SyncUnsafeCell::new(target),
         }
