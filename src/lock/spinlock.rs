@@ -17,14 +17,16 @@ impl RawSpinLock {
         }
     }
 
+    #[inline]
+    pub fn try_lock(&self) -> Result<bool, bool> {
+        self.flag
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+    }
+
     pub fn lock(&self) {
         let backoff = Backoff::new();
 
-        while self
-            .flag
-            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
+        while self.try_lock().is_err() {
             backoff.snooze();
         }
     }

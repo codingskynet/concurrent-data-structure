@@ -1,7 +1,9 @@
+mod fclock;
 mod lockfree;
 mod mutex;
 mod spinlock;
 
+pub use fclock::FCQueue;
 pub use lockfree::MSQueue;
 pub use mutex::MutexQueue;
 pub use mutex::TwoMutexQueue;
