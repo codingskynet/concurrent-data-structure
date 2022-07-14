@@ -49,7 +49,7 @@ impl<V: 'static + Debug> ConcurrentQueue<V> for FCQueue<V> {
         let record = self.queue.acquire_record(&guard);
         let record_ref = unsafe { record.deref() };
 
-        debug_assert_ne!(record_ref.get_state(&guard), State::Active);
+        debug_assert_ne!(*record_ref.get_state(&guard), State::Active);
 
         record_ref.set(QueueOp::EnqRequest(value));
 
@@ -63,7 +63,7 @@ impl<V: 'static + Debug> ConcurrentQueue<V> for FCQueue<V> {
         let record = self.queue.acquire_record(&guard);
         let record_ref = unsafe { record.deref() };
 
-        debug_assert_ne!(record_ref.get_state(&guard), State::Active);
+        debug_assert_ne!(*record_ref.get_state(&guard), State::Active);
 
         record_ref.set(QueueOp::Deq);
 
@@ -72,7 +72,7 @@ impl<V: 'static + Debug> ConcurrentQueue<V> for FCQueue<V> {
 
         let operation = record_ref.get_operation(&guard);
 
-        debug_assert_ne!(record_ref.get_state(&guard), State::Active);
+        debug_assert_ne!(*record_ref.get_state(&guard), State::Active);
 
         if let QueueOp::DeqResponse(value) = operation {
             value

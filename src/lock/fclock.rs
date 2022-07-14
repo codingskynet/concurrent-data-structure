@@ -75,8 +75,9 @@ impl<T: Send> Record<T> {
             .store(Owned::new(State::Inactive), Ordering::Release);
     }
 
-    pub fn get_state(&self, guard: &Guard) -> State {
-        unsafe { self.state.load(Ordering::Acquire, guard).deref().clone() }
+    #[inline]
+    pub fn get_state<'a>(&self, guard: &'a Guard) -> &'a State {
+        unsafe { self.state.load(Ordering::Acquire, guard).deref() }
     }
 
     pub fn get_operation(&self, guard: &Guard) -> T {
@@ -120,7 +121,7 @@ impl<T: Send + Sync + Debug> FCLock<T> {
             while !node.is_null() {
                 let node_ref = node.deref();
 
-                match node_ref.state.load(Ordering::Acquire, guard).deref() {
+                match node_ref.get_state(guard) {
                     State::Active => {
                         let operation = node_ref
                             .operation
@@ -240,44 +241,35 @@ impl<T: Send + Sync + Debug> FCLock<T> {
     }
 
     pub fn try_combine(&self, record: Shared<Record<T>>, guard: &Guard) {
-        if self.lock.try_lock().is_ok() {
-            // now the thread is combiner
-            // println!("I'm combiner! {:?}", unsafe { record.deref() });
-            // self.print_publications(guard);
+        unsafe {
+            let record_ref = record.deref();
 
-            if unsafe {
-                *record.deref().state.load(Ordering::Acquire, guard).deref() == State::Inactive
-            } {
-                // already finished
+            if self.lock.try_lock().is_ok() {
+                // now the thread is combiner
+                // println!("I'm combiner! {:?}", unsafe { record.deref() });
+                // self.print_publications(guard);
+
+                if *record_ref.get_state(guard) == State::Inactive {
+                    // already finished
+                    self.lock.unlock();
+                    return;
+                }
+
+                self.combine(guard);
+                debug_assert_eq!(*record_ref.get_state(guard), State::Inactive);
 
                 self.lock.unlock();
-                println!("already finished");
-                return;
-            }
+            } else {
+                // wait and the thread may be combiner if its operation is not finished and it gets lock
+                let backoff = Backoff::new();
 
-            self.combine(guard);
-            debug_assert_eq!(
-                *unsafe { record.deref().state.load(Ordering::Relaxed, guard).deref() },
-                State::Inactive
-            );
-
-            self.lock.unlock();
-        } else {
-            // wait and the thread may be combiner if its operation is not finished and it gets lock
-            let backoff = Backoff::new();
-
-            unsafe {
-                let record_ref = record.deref();
-
-                while *record_ref.state.load(Ordering::Acquire, guard).deref() != State::Inactive {
+                while *record_ref.get_state(guard) != State::Inactive {
                     backoff.snooze();
 
                     if self.lock.try_lock().is_ok() {
                         // Another combiner is finished. So, it can receive response
 
-                        if *record_ref.state.load(Ordering::Acquire, guard).deref()
-                            != State::Inactive
-                        {
+                        if *record_ref.get_state(guard) != State::Inactive {
                             // println!("waiting, and I'm combiner! {:?}", record.deref());
                             // self.print_publications(guard);
 
@@ -285,10 +277,7 @@ impl<T: Send + Sync + Debug> FCLock<T> {
                             self.combine(guard);
                         }
 
-                        debug_assert_eq!(
-                            *record.deref().state.load(Ordering::Relaxed, guard).deref(),
-                            State::Inactive
-                        );
+                        debug_assert_eq!(*record_ref.get_state(guard), State::Inactive);
 
                         self.lock.unlock();
                         break;
