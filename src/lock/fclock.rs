@@ -9,7 +9,7 @@ use std::{
 };
 
 use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
-use crossbeam_utils::Backoff;
+use crossbeam_utils::{atomic::AtomicConsume, Backoff};
 use thread_local::ThreadLocal;
 
 use super::spinlock::RawSpinLock;
@@ -146,6 +146,45 @@ impl<T: Send + Sync + Debug> FCLock<T> {
             // println!("finish");
             // self.print_publications(guard);
         }
+
+        self.clean(guard);
+    }
+
+    fn clean(&self, guard: &Guard) {
+        unsafe {
+            let mut parent = self.publications.load(Ordering::Acquire, guard);
+            let mut node = parent.deref().next.load(Ordering::Acquire, guard);
+
+            while !node.is_null() {
+                let node_ref = node.deref();
+
+                if *node_ref.state.load(Ordering::Acquire, guard).deref() == State::Inactive
+                    && node_ref.age.load(Ordering::Relaxed) >= MAX_AGE
+                {
+                    // remove old inactive node
+                    let parent_ref = parent.deref();
+                    let new = node_ref.next.load(Ordering::Acquire, guard);
+
+                    if parent_ref
+                        .next
+                        .compare_exchange(node, new, Ordering::Release, Ordering::Relaxed, guard)
+                        .is_ok()
+                    {
+                        node_ref
+                            .state
+                            .store(Owned::new(State::Removed), Ordering::Release);
+                        node_ref.next.store(Shared::null(), Ordering::Release);
+
+                        node = new;
+                        continue;
+                    }
+                }
+
+                // just move next
+                parent = node;
+                node = node_ref.next.load(Ordering::Acquire, guard);
+            }
+        }
     }
 
     pub fn new(target: Box<dyn FlatCombining<T>>) -> Self {
@@ -249,35 +288,33 @@ impl<T: Send + Sync + Debug> FCLock<T> {
                 // println!("I'm combiner! {:?}", unsafe { record.deref() });
                 // self.print_publications(guard);
 
-                if *record_ref.get_state(guard) == State::Inactive {
-                    // already finished
-                    self.lock.unlock();
-                    return;
+                if *record_ref.get_state(guard) == State::Active {
+                    // need to combine
+                    self.combine(guard);
                 }
 
-                self.combine(guard);
-                debug_assert_eq!(*record_ref.get_state(guard), State::Inactive);
+                debug_assert_ne!(*record_ref.get_state(guard), State::Active);
 
                 self.lock.unlock();
             } else {
                 // wait and the thread may be combiner if its operation is not finished and it gets lock
                 let backoff = Backoff::new();
 
-                while *record_ref.get_state(guard) != State::Inactive {
+                while *record_ref.get_state(guard) == State::Active {
                     backoff.snooze();
 
                     if self.lock.try_lock().is_ok() {
                         // Another combiner is finished. So, it can receive response
 
-                        if *record_ref.get_state(guard) != State::Inactive {
-                            // println!("waiting, and I'm combiner! {:?}", record.deref());
+                        if *record_ref.get_state(guard) == State::Active {
+                            // println!("waiting, and I'm combiner!");
                             // self.print_publications(guard);
 
                             // It does not receive response. So, the thread becomes combiner
                             self.combine(guard);
                         }
 
-                        debug_assert_eq!(*record_ref.get_state(guard), State::Inactive);
+                        debug_assert_ne!(*record_ref.get_state(guard), State::Active);
 
                         self.lock.unlock();
                         break;
