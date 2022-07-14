@@ -1,17 +1,21 @@
-use std::ptr;
+use std::{fmt::Debug, ptr};
 
-use crossbeam_epoch::pin;
+use crossbeam_epoch::{pin, unprotected};
 use crossbeam_utils::Backoff;
 
 use crate::lock::fclock::{FCLock, FlatCombining, State};
 
 use super::{ConcurrentQueue, Queue};
 
+#[derive(Debug)]
 enum QueueOp<V> {
     EnqRequest(V),
     Deq,
     DeqResponse(Option<V>),
 }
+
+unsafe impl<T> Send for QueueOp<T> {}
+unsafe impl<T> Sync for QueueOp<T> {}
 
 impl<V> FlatCombining<QueueOp<V>> for Queue<V> {
     fn apply(&mut self, operation: &mut QueueOp<V>) {
@@ -27,10 +31,10 @@ pub struct FCQueue<V> {
     queue: FCLock<QueueOp<V>>,
 }
 
-unsafe impl<T: Send> Send for FCQueue<T> {}
-unsafe impl<T: Send> Sync for FCQueue<T> {}
+unsafe impl<T> Send for FCQueue<T> {}
+unsafe impl<T> Sync for FCQueue<T> {}
 
-impl<V: 'static> ConcurrentQueue<V> for FCQueue<V> {
+impl<V: 'static + Debug> ConcurrentQueue<V> for FCQueue<V> {
     fn new() -> Self {
         let queue = Box::new(Queue::new());
 
@@ -42,25 +46,38 @@ impl<V: 'static> ConcurrentQueue<V> for FCQueue<V> {
     fn push(&self, value: V) {
         let guard = pin();
 
-        let record = unsafe { self.queue.acquire_record().as_mut() };
-        record.set(QueueOp::EnqRequest(value), State::Request, &guard);
+        let record = self.queue.acquire_record(&guard);
+        let record_ref = unsafe { record.deref() };
 
-        self.queue.try_combine(&guard);
+        debug_assert_ne!(record_ref.get_state(&guard), State::Active);
+
+        record_ref.set(QueueOp::EnqRequest(value));
+
+        self.queue.push_record(record, &guard);
+        self.queue.try_combine(record, &guard);
     }
 
     fn try_pop(&self) -> Option<V> {
         let guard = pin();
 
-        let record = unsafe { self.queue.acquire_record().as_mut() };
-        record.set(QueueOp::Deq, State::Request, &guard);
+        let record = self.queue.acquire_record(&guard);
+        let record_ref = unsafe { record.deref() };
 
-        self.queue.try_combine(&guard);
+        debug_assert_ne!(record_ref.get_state(&guard), State::Active);
 
-        let operation = record.get_operation(&guard);
+        record_ref.set(QueueOp::Deq);
+
+        self.queue.push_record(record, &guard);
+        self.queue.try_combine(record, &guard);
+
+        let operation = record_ref.get_operation(&guard);
+
+        debug_assert_ne!(record_ref.get_state(&guard), State::Active);
 
         if let QueueOp::DeqResponse(value) = operation {
             value
         } else {
+            println!("{:?}", operation);
             unreachable!()
         }
     }
@@ -78,3 +95,11 @@ impl<V: 'static> ConcurrentQueue<V> for FCQueue<V> {
         }
     }
 }
+
+// impl<V> Drop for FCQueue<V> {
+//     fn drop(&mut self) {
+//         unsafe {
+//             self.queue.release_local_record(unprotected());
+//         }
+//     }
+// }
