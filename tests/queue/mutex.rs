@@ -21,7 +21,7 @@ fn test_mutex_queue_simple() {
 }
 
 #[test]
-fn test_spin_lock_queue_spsc() {
+fn test_mutex_queue_spsc() {
     let queue = MutexQueue::new();
 
     scope(|scope| {
@@ -51,7 +51,7 @@ fn test_spin_lock_queue_spsc() {
 }
 
 #[test]
-fn test_spin_lock_queue_spmc() {
+fn test_mutex_queue_spmc() {
     let queue = MutexQueue::new();
 
     scope(|scope| {
@@ -75,7 +75,7 @@ fn test_spin_lock_queue_spmc() {
 }
 
 #[test]
-fn test_spin_lock_queue_mpsc() {
+fn test_mutex_queue_mpsc() {
     let queue = MutexQueue::new();
 
     scope(|scope| {
@@ -99,7 +99,7 @@ fn test_spin_lock_queue_mpsc() {
 }
 
 #[test]
-fn test_spin_lock_queue_mpmc() {
+fn test_mutex_queue_mpmc() {
     let queue = MutexQueue::new();
 
     scope(|scope| {
@@ -123,7 +123,7 @@ fn test_spin_lock_queue_mpmc() {
 }
 
 #[test]
-fn test_two_spin_lock_queue_simple() {
+fn test_two_mutex_queue_simple() {
     let queue = TwoMutexQueue::new();
 
     scope(|scope| {
@@ -142,7 +142,7 @@ fn test_two_spin_lock_queue_simple() {
 }
 
 #[test]
-fn test_two_spin_lock_queue_spsc() {
+fn test_two_mutex_queue_spsc() {
     let queue = TwoMutexQueue::new();
 
     scope(|scope| {
@@ -172,7 +172,7 @@ fn test_two_spin_lock_queue_spsc() {
 }
 
 #[test]
-fn test_two_spin_lock_queue_spmc() {
+fn test_two_mutex_queue_spmc() {
     let queue = TwoMutexQueue::new();
 
     scope(|scope| {
@@ -196,7 +196,7 @@ fn test_two_spin_lock_queue_spmc() {
 }
 
 #[test]
-fn test_two_spin_lock_queue_mpsc() {
+fn test_two_mutex_queue_mpsc() {
     let queue = TwoMutexQueue::new();
 
     scope(|scope| {
@@ -220,7 +220,7 @@ fn test_two_spin_lock_queue_mpsc() {
 }
 
 #[test]
-fn test_two_spin_lock_queue_mpmc() {
+fn test_two_mutex_queue_mpmc() {
     let queue = TwoMutexQueue::new();
 
     scope(|scope| {

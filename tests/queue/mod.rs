@@ -1,3 +1,4 @@
+mod fclock;
 mod lockfree;
 mod mutex;
 mod spinlock;

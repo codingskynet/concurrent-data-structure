@@ -1,4 +1,10 @@
+use std::thread;
+
 pub mod random;
+
+pub fn get_thread_id() -> u64 {
+    thread::current().id().as_u64().get()
+}
 
 #[macro_export]
 macro_rules! ok_or {

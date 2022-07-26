@@ -1,3 +1,4 @@
+pub mod fclock;
 pub mod seqlock;
 pub mod spinlock;
 

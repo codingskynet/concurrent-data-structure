@@ -11,25 +11,27 @@ pub struct RawSpinLock {
 }
 
 impl RawSpinLock {
-    const fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             flag: AtomicBool::new(false),
         }
     }
 
-    fn lock(&self) {
+    #[inline]
+    pub fn try_lock(&self) -> Result<bool, bool> {
+        self.flag
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+    }
+
+    pub fn lock(&self) {
         let backoff = Backoff::new();
 
-        while self
-            .flag
-            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
+        while self.try_lock().is_err() {
             backoff.snooze();
         }
     }
 
-    fn unlock(&self) {
+    pub fn unlock(&self) {
         self.flag.store(false, Ordering::Release);
     }
 }
