@@ -3,9 +3,12 @@
  */
 
 use std::{
-    cell::SyncUnsafeCell,
+    cell::UnsafeCell,
     fmt::Debug,
-    sync::atomic::{AtomicUsize, Ordering},
+    ops::Deref,
+    ptr,
+    sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering},
+    thread,
 };
 
 use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
@@ -14,8 +17,12 @@ use thread_local::ThreadLocal;
 
 use super::spinlock::RawSpinLock;
 
-pub trait FlatCombining<T> {
-    fn apply(&mut self, operation: &mut T);
+pub trait FlatCombining<T: Operation> {
+    fn apply(&mut self, operation: T) -> T;
+}
+
+pub trait Operation {
+    fn is_request(&self) -> bool;
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -91,14 +98,15 @@ impl<T: Send> Record<T> {
     }
 }
 
-pub struct FCLock<T: Send + Sync> {
+pub struct FCLock<T: Operation + Send + Sync> {
     publications: Atomic<Record<T>>,
     lock: RawSpinLock,
-    target: SyncUnsafeCell<Box<dyn FlatCombining<T>>>,
+    target: UnsafeCell<Box<dyn FlatCombining<T>>>,
     thread_local: ThreadLocal<Atomic<Record<T>>>,
+    age: AtomicUsize,
 }
 
-impl<T: Send + Sync + Debug> FCLock<T> {
+impl<T: Operation + Send + Sync + Debug> FCLock<T> {
     fn print_publications(&self, guard: &Guard) {
         unsafe {
             println!(
@@ -112,27 +120,29 @@ impl<T: Send + Sync + Debug> FCLock<T> {
         unsafe {
             let target = &mut *self.target.get();
 
-            let parent = self.publications.load(Ordering::Acquire, guard);
-            let mut node = parent.deref().next.load(Ordering::Acquire, guard);
+            let current_age = self.age.fetch_add(1, Ordering::Relaxed) + 1;
 
-            // println!("request");
-            // self.print_publications(guard);
+            let mut node = self.publications.load(Ordering::Acquire, guard);
+
+            if !node.is_null() {
+                println!("before: {:?}, {:?}", node.deref(), thread::current().id());
+            }
 
             while !node.is_null() {
                 let node_ref = node.deref();
 
                 match node_ref.get_state(guard) {
                     State::Active => {
-                        let operation = node_ref
-                            .operation
-                            .load(Ordering::Acquire, guard)
-                            .deref_mut();
+                        let op =
+                            ptr::read(node_ref.operation.load(Ordering::Acquire, guard).deref());
 
-                        target.apply(operation);
+                        node_ref.age.store(current_age, Ordering::Relaxed);
+
+                        let result_op = target.apply(op);
 
                         node_ref
-                            .state
-                            .store(Owned::new(State::Inactive), Ordering::Release);
+                            .operation
+                            .store(Owned::new(result_op), Ordering::Relaxed);
                     }
                     State::Inactive => {
                         node_ref.age.fetch_add(1, Ordering::Relaxed);
@@ -143,15 +153,26 @@ impl<T: Send + Sync + Debug> FCLock<T> {
                 node = node_ref.next.load(Ordering::Acquire, guard);
             }
 
+            if !self.publications.load(Ordering::Acquire, guard).is_null() {
+                println!(
+                    "after:  {:?}, {:?}",
+                    self.publications.load(Ordering::Acquire, guard).deref(),
+                    thread::current().id()
+                );
+            }
+
+            fence(Ordering::Release);
             // println!("finish");
             // self.print_publications(guard);
         }
 
-        self.clean(guard);
+        // self.clean(guard);
     }
 
     fn clean(&self, guard: &Guard) {
         unsafe {
+            let current_age = self.age.load(Ordering::Relaxed);
+
             let mut parent = self.publications.load(Ordering::Acquire, guard);
             let mut node = parent.deref().next.load(Ordering::Acquire, guard);
 
@@ -159,7 +180,7 @@ impl<T: Send + Sync + Debug> FCLock<T> {
                 let node_ref = node.deref();
 
                 if *node_ref.state.load(Ordering::Acquire, guard).deref() == State::Inactive
-                    && node_ref.age.load(Ordering::Relaxed) >= MAX_AGE
+                    && current_age.wrapping_sub(node_ref.age.load(Ordering::Relaxed)) >= MAX_AGE
                 {
                     // remove old inactive node
                     let parent_ref = parent.deref();
@@ -167,16 +188,19 @@ impl<T: Send + Sync + Debug> FCLock<T> {
 
                     if parent_ref
                         .next
-                        .compare_exchange(node, new, Ordering::Release, Ordering::Relaxed, guard)
+                        .compare_exchange(node, new, Ordering::Acquire, Ordering::Relaxed, guard)
                         .is_ok()
                     {
                         node_ref
                             .state
-                            .store(Owned::new(State::Removed), Ordering::Release);
-                        node_ref.next.store(Shared::null(), Ordering::Release);
+                            .store(Owned::new(State::Inactive), Ordering::Relaxed);
+
+                        // node_ref.next.store(Shared::null(), Ordering::Release);
 
                         node = new;
                         continue;
+                    } else {
+                        continue; // retry
                     }
                 }
 
@@ -187,94 +211,70 @@ impl<T: Send + Sync + Debug> FCLock<T> {
         }
     }
 
-    pub fn new(target: Box<dyn FlatCombining<T>>) -> Self {
-        let dummy = Record {
-            operation: Atomic::null(),
-            state: Atomic::null(),
-            age: AtomicUsize::new(99991),
-            next: Atomic::null(),
-        };
-
+    pub fn new(target: impl FlatCombining<T> + 'static) -> Self {
         Self {
-            publications: Atomic::new(dummy),
+            publications: Atomic::null(),
             lock: RawSpinLock::new(),
-            target: SyncUnsafeCell::new(target),
+            target: UnsafeCell::new(Box::new(target)),
             thread_local: ThreadLocal::new(),
+            age: AtomicUsize::new(0),
         }
     }
 
     pub fn acquire_record<'a>(&self, guard: &'a Guard) -> Shared<'a, Record<T>> {
-        let node = self.thread_local.get_or(|| Atomic::null());
-
-        if node.load(Ordering::Relaxed, guard).is_null() {
-            let new = Owned::new(Record {
+        let node = self.thread_local.get_or(|| {
+            Atomic::new(Record {
                 operation: Atomic::null(),
-                state: Atomic::new(State::Removed),
+                state: Atomic::new(State::Inactive),
                 age: AtomicUsize::new(0),
                 next: Atomic::null(),
-            });
+            })
+        });
 
-            node.store(new, Ordering::Relaxed);
+        let node = node.load(Ordering::Relaxed, guard);
+
+        if unsafe { *node.deref().get_state(guard) != State::Active } {
+            self.push_record(node, guard);
         }
 
-        node.load(Ordering::Relaxed, guard)
+        node
     }
 
     pub fn push_record(&self, record: Shared<Record<T>>, guard: &Guard) {
-        let backoff = Backoff::new();
+        unsafe {
+            let record_ref = record.deref();
 
-        let mut node = record;
-        let node_ref = unsafe { node.deref() };
+            debug_assert_eq!(*record_ref.get_state(guard), State::Inactive);
 
-        let node_state = unsafe { node_ref.state.load(Ordering::Relaxed, guard).deref() };
+            record_ref
+                .age
+                .store(self.age.load(Ordering::Relaxed), Ordering::Relaxed);
 
-        debug_assert_ne!(*node_state, State::Active);
-
-        node_ref.age.store(0, Ordering::Relaxed);
-
-        if *node_state == State::Inactive {
-            // already pushed on publications
-            node_ref
+            record_ref
                 .state
-                .store(Owned::new(State::Active), Ordering::Release);
-            return;
-        }
+                .store(Owned::new(State::Active), Ordering::Relaxed);
 
-        debug_assert_eq!(*node_state, State::Removed);
+            loop {
+                let head = self.publications.load(Ordering::Relaxed, guard);
 
-        node_ref
-            .state
-            .store(Owned::new(State::Active), Ordering::Release);
+                record_ref.next.store(head, Ordering::Release);
 
-        loop {
-            let dummy = unsafe { self.publications.load(Ordering::Acquire, guard).deref() };
-            let head = dummy.next.load(Ordering::Relaxed, guard);
-
-            unsafe { node.deref_mut().next.store(head, Ordering::Relaxed) };
-
-            match dummy.next.compare_exchange(
-                head,
-                node,
-                Ordering::Release,
-                Ordering::Relaxed,
-                guard,
-            ) {
-                Ok(_) => break,
-                Err(err) => node = err.new,
+                if self
+                    .publications
+                    .compare_exchange(head, record, Ordering::Release, Ordering::Relaxed, guard)
+                    .is_ok()
+                {
+                    return;
+                }
             }
-
-            backoff.spin();
         }
     }
 
-    pub fn release_local_record(&self, guard: &Guard) {
+    #[inline]
+    fn repush_record(&self, record: Shared<Record<T>>, guard: &Guard) {
         unsafe {
-            if let Some(node) = self.thread_local.get() {
-                let node = node.load(Ordering::Relaxed, guard);
-
-                if !node.is_null() {
-                    guard.defer_destroy(node);
-                }
+            if *record.deref().get_state(guard) != State::Active {
+                self.push_record(record, guard);
             }
         }
     }
@@ -285,41 +285,48 @@ impl<T: Send + Sync + Debug> FCLock<T> {
 
             if self.lock.try_lock().is_ok() {
                 // now the thread is combiner
-                // println!("I'm combiner! {:?}", unsafe { record.deref() });
-                // self.print_publications(guard);
+                self.repush_record(record, guard);
 
-                if *record_ref.get_state(guard) == State::Active {
-                    // need to combine
-                    self.combine(guard);
-                }
+                println!(
+                    "owner: my record: {:?}, {:?}",
+                    record.deref(),
+                    thread::current().id()
+                );
 
-                debug_assert_ne!(*record_ref.get_state(guard), State::Active);
+                self.combine(guard);
+
+                debug_assert_eq!(record_ref.get_operation(guard).is_request(), false);
+
+                println!(
+                    "owner: my record: {:?}, {:?}",
+                    record.deref(),
+                    thread::current().id()
+                );
 
                 self.lock.unlock();
             } else {
                 // wait and the thread may be combiner if its operation is not finished and it gets lock
-                let backoff = Backoff::new();
-
-                while *record_ref.get_state(guard) == State::Active {
-                    backoff.snooze();
+                while !record_ref.get_operation(guard).is_request() {
+                    self.repush_record(record, guard);
 
                     if self.lock.try_lock().is_ok() {
                         // Another combiner is finished. So, it can receive response
 
-                        if *record_ref.get_state(guard) == State::Active {
-                            // println!("waiting, and I'm combiner!");
-                            // self.print_publications(guard);
-
+                        if !record_ref.get_operation(guard).is_request() {
                             // It does not receive response. So, the thread becomes combiner
-                            self.combine(guard);
-                        }
+                            self.repush_record(record, guard);
 
-                        debug_assert_ne!(*record_ref.get_state(guard), State::Active);
+                            self.combine(guard);
+
+                            debug_assert_eq!(record_ref.get_operation(guard).is_request(), false);
+                        }
 
                         self.lock.unlock();
                         break;
                     }
                 }
+
+                println!("from other: {:?}, {:?}", record_ref, thread::current().id());
             }
         }
     }

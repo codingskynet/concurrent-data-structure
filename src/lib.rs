@@ -1,5 +1,3 @@
-#![feature(thread_id_value)]
-#![feature(sync_unsafe_cell)]
 pub mod avltree;
 pub mod btree;
 pub mod linkedlist;
