@@ -8,7 +8,7 @@ use std::{
     ops::Deref,
     ptr,
     sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering},
-    thread,
+    thread::{self, ThreadId},
 };
 
 use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
@@ -74,7 +74,7 @@ impl<T: Debug> Debug for Record<T> {
 impl<T: Send> Record<T> {
     pub fn set(&self, operation: T) {
         self.operation
-            .store(Owned::new(operation), Ordering::Relaxed);
+            .store(Owned::new(operation), Ordering::Release);
     }
 
     pub fn release(&self) {
@@ -87,14 +87,16 @@ impl<T: Send> Record<T> {
         unsafe { self.state.load(Ordering::Acquire, guard).deref() }
     }
 
+    pub fn get_operation_ref<'a>(&self, guard: &'a Guard) -> &'a T {
+        unsafe { self.operation.load(Ordering::Acquire, guard).deref() }
+    }
+
+    pub fn operation_null(&self, guard: &Guard) -> bool {
+        self.operation.load(Ordering::Acquire, guard).is_null()
+    }
+
     pub fn get_operation(&self, guard: &Guard) -> T {
-        unsafe {
-            *self
-                .operation
-                .load(Ordering::Acquire, guard)
-                .into_owned()
-                .into_box()
-        }
+        unsafe { ptr::read(self.operation.load(Ordering::Acquire, guard).deref()) }
     }
 }
 
@@ -124,25 +126,30 @@ impl<T: Operation + Send + Sync + Debug> FCLock<T> {
 
             let mut node = self.publications.load(Ordering::Acquire, guard);
 
-            if !node.is_null() {
-                println!("before: {:?}, {:?}", node.deref(), thread::current().id());
-            }
+            // if !node.is_null() {
+            // println!("B: {:?}, {:?}", node.deref(), thread::current().id());
+            // }
 
             while !node.is_null() {
                 let node_ref = node.deref();
 
                 match node_ref.get_state(guard) {
                     State::Active => {
-                        let op =
-                            ptr::read(node_ref.operation.load(Ordering::Acquire, guard).deref());
+                        if !node_ref.operation_null(guard)
+                            && node_ref.get_operation_ref(guard).is_request()
+                        {
+                            let op = ptr::read(
+                                node_ref.operation.load(Ordering::Acquire, guard).deref(),
+                            );
 
-                        node_ref.age.store(current_age, Ordering::Relaxed);
+                            node_ref.age.store(current_age, Ordering::Relaxed);
 
-                        let result_op = target.apply(op);
+                            let result_op = target.apply(op);
 
-                        node_ref
-                            .operation
-                            .store(Owned::new(result_op), Ordering::Relaxed);
+                            node_ref
+                                .operation
+                                .store(Owned::new(result_op), Ordering::Release);
+                        }
                     }
                     State::Inactive => {
                         node_ref.age.fetch_add(1, Ordering::Relaxed);
@@ -153,17 +160,13 @@ impl<T: Operation + Send + Sync + Debug> FCLock<T> {
                 node = node_ref.next.load(Ordering::Acquire, guard);
             }
 
-            if !self.publications.load(Ordering::Acquire, guard).is_null() {
-                println!(
-                    "after:  {:?}, {:?}",
-                    self.publications.load(Ordering::Acquire, guard).deref(),
-                    thread::current().id()
-                );
-            }
-
-            fence(Ordering::Release);
-            // println!("finish");
-            // self.print_publications(guard);
+            // if !self.publications.load(Ordering::Acquire, guard).is_null() {
+            //     println!(
+            //         "A: {:?}, {:?}",
+            //         self.publications.load(Ordering::Acquire, guard).deref(),
+            //         thread::current().id()
+            //     );
+            // }
         }
 
         // self.clean(guard);
@@ -287,47 +290,31 @@ impl<T: Operation + Send + Sync + Debug> FCLock<T> {
                 // now the thread is combiner
                 self.repush_record(record, guard);
 
-                println!(
-                    "owner: my record: {:?}, {:?}",
-                    record.deref(),
-                    thread::current().id()
-                );
-
                 self.combine(guard);
-
-                debug_assert_eq!(record_ref.get_operation(guard).is_request(), false);
-
-                println!(
-                    "owner: my record: {:?}, {:?}",
-                    record.deref(),
-                    thread::current().id()
-                );
 
                 self.lock.unlock();
             } else {
                 // wait and the thread may be combiner if its operation is not finished and it gets lock
-                while !record_ref.get_operation(guard).is_request() {
+                while record_ref.get_operation_ref(guard).is_request() {
                     self.repush_record(record, guard);
 
                     if self.lock.try_lock().is_ok() {
                         // Another combiner is finished. So, it can receive response
 
-                        if !record_ref.get_operation(guard).is_request() {
+                        if record_ref.get_operation_ref(guard).is_request() {
                             // It does not receive response. So, the thread becomes combiner
                             self.repush_record(record, guard);
 
                             self.combine(guard);
-
-                            debug_assert_eq!(record_ref.get_operation(guard).is_request(), false);
                         }
 
                         self.lock.unlock();
                         break;
                     }
                 }
-
-                println!("from other: {:?}, {:?}", record_ref, thread::current().id());
             }
+
+            debug_assert!(!record_ref.get_operation_ref(guard).is_request());
         }
     }
 }

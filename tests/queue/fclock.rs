@@ -18,18 +18,18 @@ fn test_fc_queue_simple() {
     let queue = FCQueue::new();
 
     scope(|scope| {
-        for _ in 0..2 {
+        for _ in 0..10 {
             scope.spawn(|_| {
                 for i in 0..100 {
                     queue.push(i);
-                    // queue.pop();
+                    queue.pop();
                 }
             });
         }
     })
     .unwrap();
 
-    // assert!(queue.try_pop().is_none());
+    assert!(queue.try_pop().is_none());
 }
 
 #[test]

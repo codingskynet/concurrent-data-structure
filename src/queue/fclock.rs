@@ -1,10 +1,4 @@
-use std::{
-    fmt::Debug,
-    marker::PhantomData,
-    ptr,
-    sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering},
-    thread,
-};
+use std::{fmt::Debug, marker::PhantomData, ptr, thread};
 
 use crossbeam_epoch::{pin, unprotected};
 use crossbeam_utils::Backoff;
@@ -55,7 +49,7 @@ pub struct FCQueue<V> {
 unsafe impl<T> Send for FCQueue<T> {}
 unsafe impl<T> Sync for FCQueue<T> {}
 
-impl<V: Debug + 'static + PartialEq> ConcurrentQueue<V> for FCQueue<V> {
+impl<V: Debug + 'static + PartialEq + Clone> ConcurrentQueue<V> for FCQueue<V> {
     fn new() -> Self {
         let queue = Queue::new();
 
@@ -68,16 +62,18 @@ impl<V: Debug + 'static + PartialEq> ConcurrentQueue<V> for FCQueue<V> {
         let guard = pin();
 
         let record = self.queue.acquire_record(&guard);
-
         let record_ref = unsafe { record.deref() };
 
-        record_ref.set(QueueOp::EnqRequest(value));
+        if !record_ref.operation_null(&guard) {
+            debug_assert!(!record_ref.get_operation(&guard).is_request());
+        }
+
+        record_ref.set(QueueOp::EnqRequest(value.clone()));
+
+        // println!("{:?}, {:?}", record_ref, thread::current().id());
 
         self.queue.try_combine(record, &guard);
 
-        fence(Ordering::Acquire);
-
-        // unsafe { debug_assert_eq!(record.deref().get_operation(&guard), QueueOp::EnqResponse) };
         debug_assert_eq!(
             record_ref.get_operation(&guard),
             QueueOp::EnqResponse,
@@ -93,19 +89,20 @@ impl<V: Debug + 'static + PartialEq> ConcurrentQueue<V> for FCQueue<V> {
         let record = self.queue.acquire_record(&guard);
         let record_ref = unsafe { record.deref() };
 
+        if !record_ref.operation_null(&guard) {
+            debug_assert!(!record_ref.get_operation(&guard).is_request());
+        }
+
         record_ref.set(QueueOp::Deq);
 
         self.queue.try_combine(record, &guard);
 
         let operation = record_ref.get_operation(&guard);
 
-        debug_assert_eq!(*record_ref.get_state(&guard), State::Active);
-
         if let QueueOp::DeqResponse(value) = operation {
             value
         } else {
-            println!("{:?}", operation);
-            unreachable!()
+            unreachable!("{:?}, {:?}", operation, thread::current().id());
         }
     }
 
@@ -115,9 +112,7 @@ impl<V: Debug + 'static + PartialEq> ConcurrentQueue<V> for FCQueue<V> {
         loop {
             match self.try_pop() {
                 Some(value) => return value,
-                None => {
-                    println!("none");
-                }
+                None => {}
             }
 
             backoff.snooze();
