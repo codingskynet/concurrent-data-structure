@@ -1,5 +1,3 @@
-use std::thread;
-
 pub mod random;
 
 #[macro_export]

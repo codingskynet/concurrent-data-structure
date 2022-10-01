@@ -10,7 +10,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
+use crossbeam_epoch::{pin, unprotected, Atomic, Guard, Owned, Shared};
 use crossbeam_utils::Backoff;
 use thread_local::ThreadLocal;
 
@@ -76,11 +76,6 @@ impl<T: Send> Record<T> {
             .store(Owned::new(operation), Ordering::Release);
     }
 
-    pub fn release(&self) {
-        self.state
-            .store(Owned::new(State::Inactive), Ordering::Release);
-    }
-
     #[inline]
     pub fn get_state<'a>(&self, guard: &'a Guard) -> &'a State {
         unsafe { self.state.load(Ordering::Acquire, guard).deref() }
@@ -91,12 +86,13 @@ impl<T: Send> Record<T> {
         unsafe { self.operation.load(Ordering::Acquire, guard).deref() }
     }
 
+    #[inline]
     pub fn get_operation(&self, guard: &Guard) -> T {
         unsafe { ptr::read(self.operation.load(Ordering::Acquire, guard).deref()) }
     }
 }
 
-pub struct FCLock<T: Operation + Send + Sync> {
+pub struct FCLock<T: Send + Sync> {
     publications: Atomic<Record<T>>,
     lock: RawSpinLock,
     target: UnsafeCell<Box<dyn FlatCombining<T>>>,
@@ -104,16 +100,20 @@ pub struct FCLock<T: Operation + Send + Sync> {
     age: AtomicUsize,
 }
 
-impl<T: Operation + Send + Sync + Debug> FCLock<T> {
-    fn print_publications(&self, guard: &Guard) {
+impl<T: Send + Sync> Drop for FCLock<T> {
+    fn drop(&mut self) {
         unsafe {
-            println!(
-                "{:?}",
-                self.publications.load(Ordering::SeqCst, guard).deref()
-            );
+            let guard = unprotected();
+
+            for local_record in self.thread_local.iter() {
+                let dummy = local_record.load(Ordering::Relaxed, guard);
+                drop(dummy.into_owned());
+            }
         }
     }
+}
 
+impl<T: Operation + Send + Sync> FCLock<T> {
     fn combine(&self, guard: &Guard) {
         let current_age = self.age.fetch_add(1, Ordering::Relaxed) + 1;
 

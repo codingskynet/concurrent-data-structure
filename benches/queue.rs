@@ -2,7 +2,9 @@ mod util;
 
 use std::time::{Duration, Instant};
 
-use cds::queue::{MSQueue, MutexQueue, Queue, SpinLockQueue, TwoMutexQueue, TwoSpinLockQueue};
+use cds::queue::{
+    FCQueue, MSQueue, MutexQueue, Queue, SpinLockQueue, TwoMutexQueue, TwoSpinLockQueue,
+};
 use criterion::{black_box, criterion_group, Criterion};
 use criterion::{criterion_main, SamplingMode, Throughput};
 use crossbeam_queue::SegQueue;
@@ -118,6 +120,25 @@ fn bench_crossbeam_seg_queue(c: &mut Criterion) {
     }
 }
 
+fn bench_mixed_flat_combining_spinlock_queue(c: &mut Criterion) {
+    let mut group = c.benchmark_group(format!(
+        "spinlock FCQueue/Ops(push: {}%, pop: {}%, per: {:+e})",
+        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+    ));
+    group.measurement_time(Duration::from_secs(5));
+    group.sampling_mode(SamplingMode::Flat);
+
+    for num in get_test_thread_nums() {
+        group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
+        bench_mixed_concurrent_queue::<FCQueue<_>>(
+            QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
+            QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
+            num,
+            &mut group,
+        );
+    }
+}
+
 fn bench_mixed_mutex_queue(c: &mut Criterion) {
     let mut group = c.benchmark_group(format!(
         "MutexQueue/Ops(push: {}%, pop: {}%, per: {:+e})",
@@ -217,6 +238,7 @@ criterion_group!(
     bench,
     bench_mixed_queue,
     bench_crossbeam_seg_queue,
+    bench_mixed_flat_combining_spinlock_queue,
     bench_mixed_mutex_queue,
     bench_mixed_spin_lock_queue,
     bench_mixed_two_mutex_queue,

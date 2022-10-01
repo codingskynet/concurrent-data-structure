@@ -1,6 +1,6 @@
 use std::{fmt::Debug, hint::unreachable_unchecked};
 
-use crossbeam_epoch::{pin, unprotected};
+use crossbeam_epoch::pin;
 use crossbeam_utils::Backoff;
 
 use crate::lock::fclock::{FCLock, FlatCombining, Operation};
@@ -37,7 +37,7 @@ impl<V> FlatCombining<QueueOp<V>> for Queue<V> {
                 QueueOp::EnqResponse
             }
             QueueOp::Deq => QueueOp::DeqResponse(self.pop()),
-            op => op, //unreachable!("enq response should be removed."), //unreachable!("deq response should be removed."),
+            _ => unreachable!("The response cannot be applied."),
         }
     }
 }
@@ -101,11 +101,3 @@ impl<V: Debug + 'static + PartialEq + Clone> ConcurrentQueue<V> for FCQueue<V> {
         }
     }
 }
-
-// impl<V> Drop for FCQueue<V> {
-//     fn drop(&mut self) {
-//         unsafe {
-//             self.queue.release_local_record(unprotected());
-//         }
-//     }
-// }
