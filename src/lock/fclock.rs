@@ -31,7 +31,7 @@ pub enum State {
     Removed,
 }
 
-const MAX_AGE: usize = 5;
+const MAX_AGE: usize = 1000;
 
 pub struct Record<T> {
     operation: Atomic<T>,
@@ -86,12 +86,9 @@ impl<T: Send> Record<T> {
         unsafe { self.state.load(Ordering::Acquire, guard).deref() }
     }
 
+    #[inline]
     pub fn get_operation_ref<'a>(&self, guard: &'a Guard) -> &'a T {
         unsafe { self.operation.load(Ordering::Acquire, guard).deref() }
-    }
-
-    pub fn operation_null(&self, guard: &Guard) -> bool {
-        self.operation.load(Ordering::Acquire, guard).is_null()
     }
 
     pub fn get_operation(&self, guard: &Guard) -> T {
@@ -118,10 +115,22 @@ impl<T: Operation + Send + Sync + Debug> FCLock<T> {
     }
 
     fn combine(&self, guard: &Guard) {
+        let current_age = self.age.fetch_add(1, Ordering::Relaxed) + 1;
+
+        for _ in 0..100 {
+            if !self.combine_pass(current_age, guard) {
+                break;
+            }
+        }
+
+        self.clean(guard);
+    }
+
+    fn combine_pass(&self, current_age: usize, guard: &Guard) -> bool {
+        let mut is_done = false;
+
         unsafe {
             let target = &mut *self.target.get();
-
-            let current_age = self.age.fetch_add(1, Ordering::Relaxed) + 1;
 
             let mut node = self.publications.load(Ordering::Acquire, guard);
 
@@ -149,6 +158,8 @@ impl<T: Operation + Send + Sync + Debug> FCLock<T> {
                                 node_ref
                                     .operation
                                     .store(Owned::new(result_op), Ordering::Release);
+
+                                is_done = true;
                             }
                         }
                     }
@@ -167,7 +178,7 @@ impl<T: Operation + Send + Sync + Debug> FCLock<T> {
             // }
         }
 
-        self.clean(guard);
+        is_done
     }
 
     fn clean(&self, guard: &Guard) {
@@ -199,10 +210,9 @@ impl<T: Operation + Send + Sync + Debug> FCLock<T> {
                         // node_ref.next.store(Shared::null(), Ordering::Release);
 
                         node = new;
-                        continue;
-                    } else {
-                        continue; // retry
                     }
+
+                    continue; // retry
                 }
 
                 // just move next
@@ -246,10 +256,6 @@ impl<T: Operation + Send + Sync + Debug> FCLock<T> {
             let record_ref = record.deref();
 
             debug_assert_eq!(*record_ref.get_state(guard), State::Inactive);
-
-            record_ref
-                .age
-                .store(self.age.load(Ordering::Relaxed), Ordering::Relaxed);
 
             record_ref
                 .state
