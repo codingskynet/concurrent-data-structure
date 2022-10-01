@@ -20,7 +20,7 @@ fn test_fc_queue_simple() {
     scope(|scope| {
         for _ in 0..10 {
             scope.spawn(|_| {
-                for i in 0..100 {
+                for i in 0..1_000 {
                     queue.push(i);
                     queue.pop();
                 }

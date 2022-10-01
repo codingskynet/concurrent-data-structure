@@ -5,14 +5,13 @@
 use std::{
     cell::UnsafeCell,
     fmt::Debug,
-    ops::Deref,
+    hint::unreachable_unchecked,
     ptr,
-    sync::atomic::{fence, AtomicBool, AtomicUsize, Ordering},
-    thread::{self, ThreadId},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
-use crossbeam_utils::{atomic::AtomicConsume, Backoff};
+use crossbeam_utils::Backoff;
 use thread_local::ThreadLocal;
 
 use super::spinlock::RawSpinLock;
@@ -135,26 +134,25 @@ impl<T: Operation + Send + Sync + Debug> FCLock<T> {
 
                 match node_ref.get_state(guard) {
                     State::Active => {
-                        if !node_ref.operation_null(guard)
-                            && node_ref.get_operation_ref(guard).is_request()
-                        {
-                            let op = ptr::read(
-                                node_ref.operation.load(Ordering::Acquire, guard).deref(),
-                            );
+                        let operation = node_ref.operation.load(Ordering::Acquire, guard);
 
-                            node_ref.age.store(current_age, Ordering::Relaxed);
+                        if !operation.is_null() {
+                            let operation_ref = operation.deref();
 
-                            let result_op = target.apply(op);
+                            if operation_ref.is_request() {
+                                let op = ptr::read(operation_ref);
 
-                            node_ref
-                                .operation
-                                .store(Owned::new(result_op), Ordering::Release);
+                                node_ref.age.store(current_age, Ordering::Relaxed);
+
+                                let result_op = target.apply(op);
+
+                                node_ref
+                                    .operation
+                                    .store(Owned::new(result_op), Ordering::Release);
+                            }
                         }
                     }
-                    State::Inactive => {
-                        node_ref.age.fetch_add(1, Ordering::Relaxed);
-                    }
-                    State::Removed => unreachable!(),
+                    _ => unreachable_unchecked(),
                 }
 
                 node = node_ref.next.load(Ordering::Acquire, guard);
@@ -257,6 +255,8 @@ impl<T: Operation + Send + Sync + Debug> FCLock<T> {
                 .state
                 .store(Owned::new(State::Active), Ordering::Relaxed);
 
+            let backoff = Backoff::new();
+
             loop {
                 let head = self.publications.load(Ordering::Relaxed, guard);
 
@@ -269,6 +269,8 @@ impl<T: Operation + Send + Sync + Debug> FCLock<T> {
                 {
                     return;
                 }
+
+                backoff.spin();
             }
         }
     }
@@ -295,6 +297,8 @@ impl<T: Operation + Send + Sync + Debug> FCLock<T> {
                 self.lock.unlock();
             } else {
                 // wait and the thread may be combiner if its operation is not finished and it gets lock
+                let backoff = Backoff::new();
+
                 while record_ref.get_operation_ref(guard).is_request() {
                     self.repush_record(record, guard);
 
@@ -311,6 +315,8 @@ impl<T: Operation + Send + Sync + Debug> FCLock<T> {
                         self.lock.unlock();
                         break;
                     }
+
+                    backoff.snooze();
                 }
             }
 

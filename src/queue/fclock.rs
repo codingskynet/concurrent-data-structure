@@ -1,9 +1,9 @@
-use std::{fmt::Debug, marker::PhantomData, ptr, thread};
+use std::{fmt::Debug, hint::unreachable_unchecked};
 
 use crossbeam_epoch::{pin, unprotected};
 use crossbeam_utils::Backoff;
 
-use crate::lock::fclock::{FCLock, FlatCombining, Operation, State};
+use crate::lock::fclock::{FCLock, FlatCombining, Operation};
 
 use super::{ConcurrentQueue, Queue};
 
@@ -64,23 +64,9 @@ impl<V: Debug + 'static + PartialEq + Clone> ConcurrentQueue<V> for FCQueue<V> {
         let record = self.queue.acquire_record(&guard);
         let record_ref = unsafe { record.deref() };
 
-        if !record_ref.operation_null(&guard) {
-            debug_assert!(!record_ref.get_operation(&guard).is_request());
-        }
-
         record_ref.set(QueueOp::EnqRequest(value.clone()));
 
-        // println!("{:?}, {:?}", record_ref, thread::current().id());
-
         self.queue.try_combine(record, &guard);
-
-        debug_assert_eq!(
-            record_ref.get_operation(&guard),
-            QueueOp::EnqResponse,
-            "{:?}, {:?}",
-            record_ref,
-            thread::current().id()
-        );
     }
 
     fn try_pop(&self) -> Option<V> {
@@ -88,10 +74,6 @@ impl<V: Debug + 'static + PartialEq + Clone> ConcurrentQueue<V> for FCQueue<V> {
 
         let record = self.queue.acquire_record(&guard);
         let record_ref = unsafe { record.deref() };
-
-        if !record_ref.operation_null(&guard) {
-            debug_assert!(!record_ref.get_operation(&guard).is_request());
-        }
 
         record_ref.set(QueueOp::Deq);
 
@@ -102,7 +84,7 @@ impl<V: Debug + 'static + PartialEq + Clone> ConcurrentQueue<V> for FCQueue<V> {
         if let QueueOp::DeqResponse(value) = operation {
             value
         } else {
-            unreachable!("{:?}, {:?}", operation, thread::current().id());
+            unsafe { unreachable_unchecked() }
         }
     }
 
