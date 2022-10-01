@@ -169,7 +169,7 @@ impl<T: Operation + Send + Sync + Debug> FCLock<T> {
             // }
         }
 
-        // self.clean(guard);
+        self.clean(guard);
     }
 
     fn clean(&self, guard: &Guard) {
