@@ -5,9 +5,8 @@
 use std::{
     cell::UnsafeCell,
     fmt::Debug,
-    hint::unreachable_unchecked,
     ptr,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 use crossbeam_epoch::{pin, unprotected, Atomic, Guard, Owned, Shared};
@@ -24,18 +23,11 @@ pub trait Operation {
     fn is_request(&self) -> bool;
 }
 
-#[derive(Clone, PartialEq, Debug)]
-pub enum State {
-    Inactive,
-    Active,
-    Removed,
-}
-
 const MAX_AGE: usize = 1000;
 
 pub struct Record<T> {
     operation: Atomic<T>,
-    state: Atomic<State>,
+    state: AtomicBool, // false: inactive, true: active
     age: AtomicUsize,
     next: Atomic<Record<T>>,
 }
@@ -53,11 +45,7 @@ impl<T: Debug> Debug for Record<T> {
                 debug.field("operation", &"null");
             }
 
-            if let Some(state) = self.state.load(Ordering::SeqCst, guard).as_ref() {
-                debug.field("state", state);
-            } else {
-                debug.field("state", &"null");
-            }
+            debug.field("state", &self.state.load(Ordering::Acquire));
 
             debug.field("age", &self.age.load(Ordering::SeqCst));
 
@@ -74,11 +62,6 @@ impl<T: Send> Record<T> {
     pub fn set(&self, operation: T) {
         self.operation
             .store(Owned::new(operation), Ordering::Release);
-    }
-
-    #[inline]
-    pub fn get_state<'a>(&self, guard: &'a Guard) -> &'a State {
-        unsafe { self.state.load(Ordering::Acquire, guard).deref() }
     }
 
     #[inline]
@@ -134,48 +117,35 @@ impl<T: Operation + Send + Sync> FCLock<T> {
 
             let mut node = self.publications.load(Ordering::Acquire, guard);
 
-            // if !node.is_null() {
-            // println!("B: {:?}, {:?}", node.deref(), thread::current().id());
-            // }
-
             while !node.is_null() {
                 let node_ref = node.deref();
 
-                match node_ref.get_state(guard) {
-                    State::Active => {
-                        let operation = node_ref.operation.load(Ordering::Acquire, guard);
+                if node_ref.state.load(Ordering::Acquire) {
+                    // active record
 
-                        if !operation.is_null() {
-                            let operation_ref = operation.deref();
+                    let operation = node_ref.operation.load(Ordering::Acquire, guard);
 
-                            if operation_ref.is_request() {
-                                let op = ptr::read(operation_ref);
+                    if !operation.is_null() {
+                        let operation_ref = operation.deref();
 
-                                node_ref.age.store(current_age, Ordering::Relaxed);
+                        if operation_ref.is_request() {
+                            let op = ptr::read(operation_ref);
 
-                                let result_op = target.apply(op);
+                            node_ref.age.store(current_age, Ordering::Relaxed);
 
-                                node_ref
-                                    .operation
-                                    .store(Owned::new(result_op), Ordering::Release);
+                            let result_op = target.apply(op);
 
-                                is_done = true;
-                            }
+                            node_ref
+                                .operation
+                                .store(Owned::new(result_op), Ordering::Release);
+
+                            is_done = true;
                         }
                     }
-                    _ => unreachable_unchecked(),
                 }
 
                 node = node_ref.next.load(Ordering::Acquire, guard);
             }
-
-            // if !self.publications.load(Ordering::Acquire, guard).is_null() {
-            //     println!(
-            //         "A: {:?}, {:?}",
-            //         self.publications.load(Ordering::Acquire, guard).deref(),
-            //         thread::current().id()
-            //     );
-            // }
         }
 
         is_done
@@ -191,7 +161,7 @@ impl<T: Operation + Send + Sync> FCLock<T> {
             while !node.is_null() {
                 let node_ref = node.deref();
 
-                if *node_ref.state.load(Ordering::Acquire, guard).deref() == State::Inactive
+                if !node_ref.state.load(Ordering::Acquire)
                     && current_age.wrapping_sub(node_ref.age.load(Ordering::Relaxed)) >= MAX_AGE
                 {
                     // remove old inactive node
@@ -203,11 +173,7 @@ impl<T: Operation + Send + Sync> FCLock<T> {
                         .compare_exchange(node, new, Ordering::Acquire, Ordering::Relaxed, guard)
                         .is_ok()
                     {
-                        node_ref
-                            .state
-                            .store(Owned::new(State::Inactive), Ordering::Relaxed);
-
-                        // node_ref.next.store(Shared::null(), Ordering::Release);
+                        node_ref.state.store(false, Ordering::Relaxed);
 
                         node = new;
                     }
@@ -236,7 +202,7 @@ impl<T: Operation + Send + Sync> FCLock<T> {
         let node = self.thread_local.get_or(|| {
             Atomic::new(Record {
                 operation: Atomic::null(),
-                state: Atomic::new(State::Inactive),
+                state: AtomicBool::new(false),
                 age: AtomicUsize::new(0),
                 next: Atomic::null(),
             })
@@ -244,7 +210,7 @@ impl<T: Operation + Send + Sync> FCLock<T> {
 
         let node = node.load(Ordering::Relaxed, guard);
 
-        if unsafe { *node.deref().get_state(guard) != State::Active } {
+        if unsafe { !node.deref().state.load(Ordering::Acquire) } {
             self.push_record(node, guard);
         }
 
@@ -255,11 +221,9 @@ impl<T: Operation + Send + Sync> FCLock<T> {
         unsafe {
             let record_ref = record.deref();
 
-            debug_assert_eq!(*record_ref.get_state(guard), State::Inactive);
+            debug_assert!(!record_ref.state.load(Ordering::Relaxed));
 
-            record_ref
-                .state
-                .store(Owned::new(State::Active), Ordering::Relaxed);
+            record_ref.state.store(true, Ordering::Relaxed);
 
             let backoff = Backoff::new();
 
@@ -284,7 +248,7 @@ impl<T: Operation + Send + Sync> FCLock<T> {
     #[inline]
     fn repush_record(&self, record: Shared<Record<T>>, guard: &Guard) {
         unsafe {
-            if *record.deref().get_state(guard) != State::Active {
+            if !record.deref().state.load(Ordering::Acquire) {
                 self.push_record(record, guard);
             }
         }
