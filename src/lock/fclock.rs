@@ -15,19 +15,16 @@ use thread_local::ThreadLocal;
 
 use super::spinlock::RawSpinLock;
 
-pub trait FlatCombining<T: Operation> {
+pub trait FlatCombining<T> {
     fn apply(&mut self, operation: T) -> T;
 }
 
-pub trait Operation {
-    fn is_request(&self) -> bool;
-}
-
+const COMPACT_FACTOR: usize = 16 - 1;
 const MAX_AGE: usize = 1000;
 
 pub struct Record<T> {
-    operation: Atomic<T>,
-    state: AtomicBool, // false: inactive, true: active
+    operation: Atomic<T>, // The tag 0/1 means response/request.
+    state: AtomicBool,    // false: inactive, true: active
     age: AtomicUsize,
     next: Atomic<Record<T>>,
 }
@@ -45,7 +42,7 @@ impl<T: Debug> Debug for Record<T> {
                 debug.field("operation", &"null");
             }
 
-            debug.field("state", &self.state.load(Ordering::Acquire));
+            debug.field("state", &self.state.load(Ordering::SeqCst));
 
             debug.field("age", &self.age.load(Ordering::SeqCst));
 
@@ -59,19 +56,20 @@ impl<T: Debug> Debug for Record<T> {
 }
 
 impl<T: Send> Record<T> {
+    #[inline]
     pub fn set(&self, operation: T) {
         self.operation
-            .store(Owned::new(operation), Ordering::Release);
+            .store(Owned::new(operation).with_tag(1), Ordering::Release);
     }
 
     #[inline]
-    pub fn get_operation_ref<'a>(&self, guard: &'a Guard) -> &'a T {
-        unsafe { self.operation.load(Ordering::Acquire, guard).deref() }
+    fn is_response(&self, guard: &Guard) -> bool {
+        self.operation.load(Ordering::Acquire, guard).tag() == 0
     }
 
     #[inline]
     pub fn get_operation(&self, guard: &Guard) -> T {
-        unsafe { ptr::read(self.operation.load(Ordering::Acquire, guard).deref()) }
+        unsafe { ptr::read(self.operation.load(Ordering::Relaxed, guard).deref()) }
     }
 }
 
@@ -96,17 +94,28 @@ impl<T: Send + Sync> Drop for FCLock<T> {
     }
 }
 
-impl<T: Operation + Send + Sync> FCLock<T> {
+impl<T: Send + Sync> FCLock<T> {
     fn combine(&self, guard: &Guard) {
         let current_age = self.age.fetch_add(1, Ordering::Relaxed) + 1;
 
+        // TODO: this way is useful?
+        let mut useful_pass = 0;
+        let mut empty_pass = 0;
         for _ in 0..100 {
-            if !self.combine_pass(current_age, guard) {
-                break;
+            if self.combine_pass(current_age, guard) {
+                useful_pass += 1;
+            } else {
+                empty_pass += 1;
+
+                if empty_pass > useful_pass {
+                    break;
+                }
             }
         }
 
-        self.clean(guard);
+        if current_age & COMPACT_FACTOR == 0 {
+            self.clean(guard);
+        }
     }
 
     fn combine_pass(&self, current_age: usize, guard: &Guard) -> bool {
@@ -122,25 +131,22 @@ impl<T: Operation + Send + Sync> FCLock<T> {
 
                 if node_ref.state.load(Ordering::Acquire) {
                     // active record
-
                     let operation = node_ref.operation.load(Ordering::Acquire, guard);
 
-                    if !operation.is_null() {
+                    if operation.tag() == 1 {
                         let operation_ref = operation.deref();
 
-                        if operation_ref.is_request() {
-                            let op = ptr::read(operation_ref);
+                        let op = ptr::read(operation_ref);
 
-                            node_ref.age.store(current_age, Ordering::Relaxed);
+                        node_ref.age.store(current_age, Ordering::Relaxed);
 
-                            let result_op = target.apply(op);
+                        let result_op = target.apply(op);
 
-                            node_ref
-                                .operation
-                                .store(Owned::new(result_op), Ordering::Release);
+                        node_ref
+                            .operation
+                            .store(Owned::new(result_op).with_tag(0), Ordering::Release);
 
-                            is_done = true;
-                        }
+                        is_done = true;
                     }
                 }
 
@@ -269,13 +275,13 @@ impl<T: Operation + Send + Sync> FCLock<T> {
                 // wait and the thread may be combiner if its operation is not finished and it gets lock
                 let backoff = Backoff::new();
 
-                while record_ref.get_operation_ref(guard).is_request() {
+                while !record_ref.is_response(guard) {
                     self.repush_record(record, guard);
 
                     if self.lock.try_lock().is_ok() {
                         // Another combiner is finished. So, it can receive response
 
-                        if record_ref.get_operation_ref(guard).is_request() {
+                        if !record_ref.is_response(guard) {
                             // It does not receive response. So, the thread becomes combiner
                             self.repush_record(record, guard);
 
@@ -289,8 +295,6 @@ impl<T: Operation + Send + Sync> FCLock<T> {
                     backoff.snooze();
                 }
             }
-
-            debug_assert!(!record_ref.get_operation_ref(guard).is_request());
         }
     }
 }

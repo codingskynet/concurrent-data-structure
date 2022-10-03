@@ -3,7 +3,7 @@ use std::{fmt::Debug, hint::unreachable_unchecked};
 use crossbeam_epoch::pin;
 use crossbeam_utils::Backoff;
 
-use crate::lock::fclock::{FCLock, FlatCombining, Operation};
+use crate::lock::fclock::{FCLock, FlatCombining};
 
 use super::{ConcurrentQueue, Queue};
 
@@ -11,19 +11,8 @@ use super::{ConcurrentQueue, Queue};
 enum QueueOp<V> {
     EnqRequest(V),
     EnqResponse,
-    Deq,
+    DeqRequest,
     DeqResponse(Option<V>),
-}
-
-impl<V> Operation for QueueOp<V> {
-    fn is_request(&self) -> bool {
-        match self {
-            QueueOp::EnqRequest(_) => true,
-            QueueOp::EnqResponse => false,
-            QueueOp::Deq => true,
-            QueueOp::DeqResponse(_) => false,
-        }
-    }
 }
 
 unsafe impl<T> Send for QueueOp<T> {}
@@ -36,7 +25,7 @@ impl<V> FlatCombining<QueueOp<V>> for Queue<V> {
                 self.push(value);
                 QueueOp::EnqResponse
             }
-            QueueOp::Deq => QueueOp::DeqResponse(self.pop()),
+            QueueOp::DeqRequest => QueueOp::DeqResponse(self.pop()),
             _ => unreachable!("The response cannot be applied."),
         }
     }
@@ -75,7 +64,7 @@ impl<V: Debug + 'static + PartialEq + Clone> ConcurrentQueue<V> for FCQueue<V> {
         let record = self.queue.acquire_record(&guard);
         let record_ref = unsafe { record.deref() };
 
-        record_ref.set(QueueOp::Deq);
+        record_ref.set(QueueOp::DeqRequest);
 
         self.queue.try_combine(record, &guard);
 
