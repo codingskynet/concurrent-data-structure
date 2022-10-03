@@ -19,7 +19,9 @@ pub trait FlatCombining<T> {
     fn apply(&mut self, operation: T) -> T;
 }
 
-const COMPACT_FACTOR: usize = 2;
+// libcds constant: 1024 - 1, 8
+const COMPACT_FACTOR: usize = 1024 - 1;
+const COMBINE_PASS: usize = 8;
 
 pub struct Record<T> {
     operation: Atomic<T>, // The tag 0/1 means response/request.
@@ -129,7 +131,7 @@ impl<T: Send + Sync> FCLock<T> {
         // TODO: this way is useful?
         let mut useful_pass = 0;
         let mut empty_pass = 0;
-        for _ in 0..10000 {
+        for _ in 0..COMBINE_PASS {
             if self.combine_pass(current_age, guard) {
                 useful_pass += 1;
             } else {
@@ -196,7 +198,7 @@ impl<T: Send + Sync> FCLock<T> {
 
                 if node_ref.state.load(Ordering::Acquire)
                     && current_age.wrapping_sub(node_ref.age.load(Ordering::Relaxed))
-                        >= COMPACT_FACTOR
+                        > COMPACT_FACTOR
                 {
                     // remove old inactive node
                     let parent_ref = parent.deref();
