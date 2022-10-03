@@ -38,7 +38,14 @@ pub struct FCQueue<V> {
 unsafe impl<T> Send for FCQueue<T> {}
 unsafe impl<T> Sync for FCQueue<T> {}
 
-impl<V: Debug + 'static + PartialEq + Clone> ConcurrentQueue<V> for FCQueue<V> {
+impl<V> FCQueue<V> {
+    #[cfg(feature = "concurrent_stat")]
+    pub fn print_stat(&self) {
+        self.queue.print_stat();
+    }
+}
+
+impl<V: 'static> ConcurrentQueue<V> for FCQueue<V> {
     fn new() -> Self {
         let queue = Queue::new();
 
@@ -53,7 +60,7 @@ impl<V: Debug + 'static + PartialEq + Clone> ConcurrentQueue<V> for FCQueue<V> {
         let record = self.queue.acquire_record(&guard);
         let record_ref = unsafe { record.deref() };
 
-        record_ref.set(QueueOp::EnqRequest(value.clone()));
+        record_ref.set(QueueOp::EnqRequest(value));
 
         self.queue.try_combine(record, &guard);
     }
@@ -83,10 +90,8 @@ impl<V: Debug + 'static + PartialEq + Clone> ConcurrentQueue<V> for FCQueue<V> {
         loop {
             match self.try_pop() {
                 Some(value) => return value,
-                None => {}
+                None => backoff.snooze(),
             }
-
-            backoff.snooze();
         }
     }
 }

@@ -59,6 +59,9 @@ fn test_fc_queue_spsc() {
     .unwrap();
 
     assert!(queue.try_pop().is_none());
+
+    #[cfg(feature = "concurrent_stat")]
+    queue.print_stat();
 }
 
 #[test]
@@ -83,6 +86,9 @@ fn test_fc_queue_spmc() {
     .unwrap();
 
     assert!(queue.try_pop().is_none());
+
+    #[cfg(feature = "concurrent_stat")]
+    queue.print_stat();
 }
 
 #[test]
@@ -107,6 +113,9 @@ fn test_fc_queue_mpsc() {
     .unwrap();
 
     assert!(queue.try_pop().is_none());
+
+    #[cfg(feature = "concurrent_stat")]
+    queue.print_stat();
 }
 
 #[test]
@@ -131,4 +140,7 @@ fn test_fc_queue_mpmc() {
     .unwrap();
 
     assert!(queue.try_pop().is_none());
+
+    #[cfg(feature = "concurrent_stat")]
+    queue.print_stat();
 }

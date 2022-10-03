@@ -79,6 +79,23 @@ pub struct FCLock<T: Send + Sync> {
     target: UnsafeCell<Box<dyn FlatCombining<T>>>,
     thread_local: ThreadLocal<Atomic<Record<T>>>,
     age: AtomicUsize,
+    stat: FCLockStat,
+}
+
+#[derive(Default, Debug)]
+struct FCLockStat {
+    repush_record: AtomicUsize,
+
+    // the stat on combining
+    combine: AtomicUsize,
+    passive_wait: AtomicUsize,
+    passive_wait_iter: AtomicUsize,
+    passive_response_after_lock: AtomicUsize,
+    passive_to_combine: AtomicUsize,
+
+    // the stat on compacting publications
+    compact_pubs: AtomicUsize,
+    deactivated_record: AtomicUsize,
 }
 
 impl<T: Send + Sync> Drop for FCLock<T> {
@@ -95,6 +112,18 @@ impl<T: Send + Sync> Drop for FCLock<T> {
 }
 
 impl<T: Send + Sync> FCLock<T> {
+    #[inline]
+    fn repush_record(&self, record: Shared<Record<T>>, guard: &Guard) {
+        unsafe {
+            if !record.deref().state.load(Ordering::Acquire) {
+                self.push_record(record, guard);
+
+                #[cfg(feature = "concurrent_stat")]
+                self.stat.repush_record.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
     fn combine(&self, guard: &Guard) {
         let current_age = self.age.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -113,8 +142,11 @@ impl<T: Send + Sync> FCLock<T> {
             }
         }
 
+        #[cfg(feature = "concurrent_stat")]
+        self.stat.combine.fetch_add(1, Ordering::Relaxed);
+
         if current_age & COMPACT_FACTOR == 0 {
-            self.clean(guard);
+            self.compact_publications(current_age, guard);
         }
     }
 
@@ -134,17 +166,15 @@ impl<T: Send + Sync> FCLock<T> {
                     let operation = node_ref.operation.load(Ordering::Acquire, guard);
 
                     if operation.tag() == 1 {
-                        let operation_ref = operation.deref();
-
-                        let op = ptr::read(operation_ref);
+                        let operation = ptr::read(operation.deref());
 
                         node_ref.age.store(current_age, Ordering::Relaxed);
 
-                        let result_op = target.apply(op);
+                        let response = target.apply(operation);
 
                         node_ref
                             .operation
-                            .store(Owned::new(result_op).with_tag(0), Ordering::Release);
+                            .store(Owned::new(response).with_tag(0), Ordering::Release);
 
                         is_done = true;
                     }
@@ -157,10 +187,8 @@ impl<T: Send + Sync> FCLock<T> {
         is_done
     }
 
-    fn clean(&self, guard: &Guard) {
+    fn compact_publications(&self, current_age: usize, guard: &Guard) {
         unsafe {
-            let current_age = self.age.load(Ordering::Relaxed);
-
             let mut parent = self.publications.load(Ordering::Acquire, guard);
             let mut node = parent.deref().next.load(Ordering::Acquire, guard);
 
@@ -180,11 +208,13 @@ impl<T: Send + Sync> FCLock<T> {
                         .is_ok()
                     {
                         node_ref.state.store(false, Ordering::Relaxed);
-
                         node = new;
+
+                        #[cfg(feature = "concurrent_stat")]
+                        self.stat.deactivated_record.fetch_add(1, Ordering::Relaxed);
                     }
 
-                    continue; // retry
+                    continue;
                 }
 
                 // just move next
@@ -192,6 +222,9 @@ impl<T: Send + Sync> FCLock<T> {
                 node = node_ref.next.load(Ordering::Acquire, guard);
             }
         }
+
+        #[cfg(feature = "concurrent_stat")]
+        self.stat.compact_pubs.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn new(target: impl FlatCombining<T> + 'static) -> Self {
@@ -201,6 +234,7 @@ impl<T: Send + Sync> FCLock<T> {
             target: UnsafeCell::new(Box::new(target)),
             thread_local: ThreadLocal::new(),
             age: AtomicUsize::new(0),
+            stat: FCLockStat::default(),
         }
     }
 
@@ -251,15 +285,6 @@ impl<T: Send + Sync> FCLock<T> {
         }
     }
 
-    #[inline]
-    fn repush_record(&self, record: Shared<Record<T>>, guard: &Guard) {
-        unsafe {
-            if !record.deref().state.load(Ordering::Acquire) {
-                self.push_record(record, guard);
-            }
-        }
-    }
-
     pub fn try_combine(&self, record: Shared<Record<T>>, guard: &Guard) {
         unsafe {
             let record_ref = record.deref();
@@ -272,11 +297,17 @@ impl<T: Send + Sync> FCLock<T> {
 
                 self.lock.unlock();
             } else {
+                #[cfg(feature = "concurrent_stat")]
+                self.stat.passive_wait.fetch_add(1, Ordering::Relaxed);
+
                 // wait and the thread may be combiner if its operation is not finished and it gets lock
                 let backoff = Backoff::new();
 
                 while !record_ref.is_response(guard) {
                     self.repush_record(record, guard);
+
+                    #[cfg(feature = "concurrent_stat")]
+                    self.stat.passive_wait_iter.fetch_add(1, Ordering::Relaxed);
 
                     if self.lock.try_lock().is_ok() {
                         // Another combiner is finished. So, it can receive response
@@ -286,6 +317,14 @@ impl<T: Send + Sync> FCLock<T> {
                             self.repush_record(record, guard);
 
                             self.combine(guard);
+
+                            #[cfg(feature = "concurrent_stat")]
+                            self.stat.passive_to_combine.fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            #[cfg(feature = "concurrent_stat")]
+                            self.stat
+                                .passive_response_after_lock
+                                .fetch_add(1, Ordering::Relaxed);
                         }
 
                         self.lock.unlock();
@@ -296,5 +335,10 @@ impl<T: Send + Sync> FCLock<T> {
                 }
             }
         }
+    }
+
+    #[cfg(feature = "concurrent_stat")]
+    pub fn print_stat(&self) {
+        println!("{:?}", self.stat);
     }
 }

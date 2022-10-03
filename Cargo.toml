@@ -4,6 +4,10 @@ version = "0.1.0"
 authors = ["Taewoo An <taewoo.an@kaist.ac.kr>"]
 edition = "2018"
 
+[features]
+default = ["concurrent_stat"]
+concurrent_stat = []
+
 [dependencies]
 crossbeam-epoch = "0.9.5"
 crossbeam-utils = "0.8.5"
