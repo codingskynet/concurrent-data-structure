@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use cds::map::SequentialMap;
+use cds::{map::SequentialMap, queue::SequentialQueue};
 use criterion::{black_box, measurement::WallTime, BenchmarkGroup};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
 
@@ -47,6 +47,41 @@ pub fn fuzz_sequential_logs(
     }
 
     result
+}
+
+pub fn bench_mixed_sequential_queue<S>(push: usize, pop: usize, c: &mut BenchmarkGroup<WallTime>)
+where
+    S: SequentialQueue<u64>,
+{
+    let per_ops = push + pop;
+
+    c.bench_function("sequential", |b| {
+        b.iter_custom(|iters| {
+            let mut queue = S::new();
+
+            let mut duration = Duration::ZERO;
+
+            for _ in 0..iters {
+                let mut rng = thread_rng();
+
+                let op_idx = rng.gen_range(0..per_ops);
+
+                if op_idx < per_ops {
+                    let value: u64 = rng.gen();
+
+                    let start = Instant::now();
+                    let _ = black_box(queue.push(value));
+                    duration += start.elapsed();
+                } else {
+                    let start = Instant::now();
+                    let _ = black_box(queue.pop());
+                    duration += start.elapsed();
+                }
+            }
+
+            duration
+        });
+    });
 }
 
 pub fn bench_logs_btreemap(mut logs: Vec<(Vec<u64>, Vec<Op>)>, c: &mut BenchmarkGroup<WallTime>) {

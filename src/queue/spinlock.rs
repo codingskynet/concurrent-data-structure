@@ -7,7 +7,7 @@ use std::{
 
 use crossbeam_utils::{Backoff, CachePadded};
 
-use super::{ConcurrentQueue, Node, Queue};
+use super::{ConcurrentQueue, Node, Queue, SequentialQueue};
 
 use crate::lock::spinlock::SpinLock;
 

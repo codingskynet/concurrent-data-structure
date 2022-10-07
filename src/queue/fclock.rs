@@ -5,7 +5,7 @@ use crossbeam_utils::Backoff;
 
 use crate::lock::fclock::{FCLock, FlatCombining};
 
-use super::{ConcurrentQueue, Queue};
+use super::{ConcurrentQueue, FatNodeQueue, SequentialQueue};
 
 #[derive(Debug, PartialEq)]
 enum QueueOp<V> {
@@ -18,7 +18,7 @@ enum QueueOp<V> {
 unsafe impl<T> Send for QueueOp<T> {}
 unsafe impl<T> Sync for QueueOp<T> {}
 
-impl<V> FlatCombining<QueueOp<V>> for Queue<V> {
+impl<V> FlatCombining<QueueOp<V>> for FatNodeQueue<V> {
     fn apply(&mut self, operation: QueueOp<V>) -> QueueOp<V> {
         match operation {
             QueueOp::EnqRequest(value) => {
@@ -47,7 +47,7 @@ impl<V> FCQueue<V> {
 
 impl<V: 'static> ConcurrentQueue<V> for FCQueue<V> {
     fn new() -> Self {
-        let queue = Queue::new();
+        let queue = FatNodeQueue::new();
 
         Self {
             queue: FCLock::new(queue),
