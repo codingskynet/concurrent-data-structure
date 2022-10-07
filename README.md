@@ -9,6 +9,18 @@ Implement sequential, lock-based and lock-free concurrent data structures below:
 | Lock-based | Done  | Done  |             |   Done   |        |
 | Lock-free  | Done  | Done  |             |          |        |
 
+## Benchmark
+You can run bench like this:
+```bash
+cargo criterion --bench {bench_name} --no-default-features # default feature has accumulating stats on available structure.
+```
+
+Available Benches:
+- stack
+- queue
+- avltree
+- btrees
+
 ## Detail
 ### Lock
 - Common SpinLock and SeqLock

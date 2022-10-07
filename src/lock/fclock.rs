@@ -10,7 +10,7 @@ use std::{
 };
 
 use crossbeam_epoch::{pin, unprotected, Atomic, Guard, Owned, Shared};
-use crossbeam_utils::Backoff;
+use crossbeam_utils::{Backoff, CachePadded};
 use thread_local::ThreadLocal;
 
 use super::spinlock::RawSpinLock;
@@ -76,7 +76,7 @@ impl<T: Send> Record<T> {
 
 pub struct FCLock<T: Send + Sync> {
     publications: Atomic<Record<T>>,
-    lock: RawSpinLock,
+    lock: CachePadded<RawSpinLock>,
     target: UnsafeCell<Box<dyn FlatCombining<T>>>,
     thread_local: ThreadLocal<Atomic<Record<T>>>,
     age: AtomicUsize,
@@ -232,7 +232,7 @@ impl<T: Send + Sync> FCLock<T> {
     pub fn new(target: impl FlatCombining<T> + 'static) -> Self {
         Self {
             publications: Atomic::null(),
-            lock: RawSpinLock::new(),
+            lock: CachePadded::new(RawSpinLock::new()),
             target: UnsafeCell::new(Box::new(target)),
             thread_local: ThreadLocal::new(),
             age: AtomicUsize::new(0),
