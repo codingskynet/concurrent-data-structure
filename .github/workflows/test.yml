@@ -1,0 +1,19 @@
+name: CI
+
+on: [push]
+
+jobs:
+  debug_build_and_test_AMD64:
+    name: Build & Test(Debug) on AMD64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+      - run: cargo test -- --nocapture
+  release_build_and_test_AMD64:
+    name: Build & Test(Release) on AMD64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+      - run: cargo test --release -- --nocapture
