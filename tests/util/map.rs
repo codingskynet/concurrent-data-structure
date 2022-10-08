@@ -56,7 +56,7 @@ where
     let mut ref_map: BTreeMap<K, u64> = BTreeMap::new();
     let mut rng = thread_rng();
 
-    for i in 1..=iter {
+    for _ in 1..=iter {
         let t = types.choose(&mut rng).unwrap();
         let ref_map_keys = ref_map.keys().collect::<Vec<&K>>();
         let existing_key = ref_map_keys.choose(&mut rng);
@@ -74,22 +74,22 @@ where
                     // should success
                     let value: u64 = rng.gen();
 
-                    println!(
-                        "[{:0>10}] InsertNone: ({:?}, {})",
-                        i, not_existing_key, value
-                    );
+                    // println!(
+                    //     "[{:0>10}] InsertNone: ({:?}, {})",
+                    //     i, not_existing_key, value
+                    // );
                     assert_eq!(ref_map.insert(not_existing_key.clone(), value), None);
                     assert_eq!(map.insert(&not_existing_key, value), Ok(()));
                 }
                 Operation::Lookup => {
                     // should fail
-                    println!("[{:0>10}] LookupNone: ({:?}, None)", i, not_existing_key);
+                    // println!("[{:0>10}] LookupNone: ({:?}, None)", i, not_existing_key);
                     assert_eq!(ref_map.get(&not_existing_key), None);
                     assert_eq!(map.lookup(&not_existing_key), None);
                 }
                 Operation::Remove => {
                     // should fail
-                    println!("[{:0>10}] RemoveNone: ({:?}, Err)", i, not_existing_key);
+                    // println!("[{:0>10}] RemoveNone: ({:?}, Err)", i, not_existing_key);
                     assert_eq!(ref_map.remove(&not_existing_key), None);
                     assert_eq!(map.remove(&not_existing_key), Err(()));
                 }
@@ -103,31 +103,31 @@ where
                     // should fail
                     let value: u64 = rng.gen();
 
-                    println!("[{:0>10}] InsertSome: ({:?}, {})", i, existing_key, value);
+                    // println!("[{:0>10}] InsertSome: ({:?}, {})", i, existing_key, value);
                     assert_eq!(map.insert(&existing_key, value), Err(value));
                 }
                 Operation::Lookup => {
                     // should success
                     let value = ref_map.get(&existing_key);
 
-                    println!(
-                        "[{:0>10}] LookupSome: ({:?}, {})",
-                        i,
-                        existing_key,
-                        value.unwrap()
-                    );
+                    // println!(
+                    //     "[{:0>10}] LookupSome: ({:?}, {})",
+                    //     i,
+                    //     existing_key,
+                    //     value.unwrap()
+                    // );
                     assert_eq!(map.lookup(&existing_key), value);
                 }
                 Operation::Remove => {
                     // should success
                     let value = ref_map.remove(&existing_key);
 
-                    println!(
-                        "[{:0>10}] RemoveSome: ({:?}, {})",
-                        i,
-                        existing_key,
-                        value.unwrap()
-                    );
+                    // println!(
+                    //     "[{:0>10}] RemoveSome: ({:?}, {})",
+                    //     i,
+                    //     existing_key,
+                    //     value.unwrap()
+                    // );
                     assert_eq!(map.remove(&existing_key).ok(), value);
 
                     // early stop code if the remove has any problems
@@ -292,7 +292,7 @@ where
     .unwrap();
 
     if assert_log {
-        println!("Asserting logs...");
+        // println!("Asserting logs...");
         assert_logs(logs);
     }
 }
@@ -310,7 +310,6 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
     }
 
     for (key, mut key_logs) in key_logs {
-        // println!("key: {:?}, num: {}", key, key_logs.len());
         key_logs.sort_by(|a, b| a.start.cmp(&b.start));
 
         let mut value_logs = HashMap::new();

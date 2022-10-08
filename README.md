@@ -9,7 +9,36 @@ Implement sequential, lock-based and lock-free concurrent data structures below:
 | Lock-based | Done  | Done  |             |   Done   |        |
 | Lock-free  | Done  | Done  |             |          |        |
 
+## Benchmark
+You can run bench like this:
+```bash
+cargo install criterion
+cargo criterion --bench {bench_name} --no-default-features # default feature has accumulating stats on available structure.
+```
+
+Available Benches:
+- stack
+- queue
+- avltree
+- btrees
+
+## Profile
+You can try profiling.
+
+### Use CDS's stats
+Several cds has its own statistics. Use it by printing on test.
+
+### Flamegraph
+```bash
+cargo install flamegraph
+sudo cargo flamegraph --no-default-features --test tests -- {test_name}
+```
+
 ## Detail
+### Lock
+- Common SpinLock and SeqLock
+- [Flat Combining Lock](https://people.csail.mit.edu/shanir/publications/Flat%20Combining%20SPAA%2010.pdf)
+
 ### Stack
 - Lock Stack(based on std::sync::Mutex and spin lock)
 - [Treiber's Stack](https://dominoweb.draco.res.ibm.com/58319a2ed2b1078985257003004617ef.html)

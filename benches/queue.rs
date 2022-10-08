@@ -2,7 +2,8 @@ mod util;
 
 use std::time::{Duration, Instant};
 
-use cds::queue::{MSQueue, MutexQueue, Queue, SpinLockQueue, TwoMutexQueue, TwoSpinLockQueue};
+use cds::lock::{RawMutex, RawSpinLock};
+use cds::queue::*;
 use criterion::{black_box, criterion_group, Criterion};
 use criterion::{criterion_main, SamplingMode, Throughput};
 use crossbeam_queue::SegQueue;
@@ -10,6 +11,7 @@ use crossbeam_utils::thread;
 use rand::{thread_rng, Rng};
 
 use util::concurrent::{bench_mixed_concurrent_queue, get_test_thread_nums};
+use util::sequential::bench_mixed_sequential_queue;
 
 const QUEUE_PER_OPS: usize = 10_000;
 const QUEUE_PUSH_RATE: usize = 50;
@@ -23,34 +25,26 @@ fn bench_mixed_queue(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(QUEUE_PER_OPS as u64));
+    bench_mixed_sequential_queue::<Queue<_>>(
+        QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
+        QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
+        &mut group,
+    );
+}
 
-    group.bench_function("sequential", |b| {
-        b.iter_custom(|iters| {
-            let mut queue = Queue::new();
-
-            let mut duration = Duration::ZERO;
-
-            for _ in 0..iters {
-                let mut rng = thread_rng();
-
-                let op_idx = rng.gen_range(0..QUEUE_PER_OPS);
-
-                if op_idx < QUEUE_PER_OPS {
-                    let value: u64 = rng.gen();
-
-                    let start = Instant::now();
-                    let _ = black_box(queue.push(value));
-                    duration += start.elapsed();
-                } else {
-                    let start = Instant::now();
-                    let _ = black_box(queue.pop());
-                    duration += start.elapsed();
-                }
-            }
-
-            duration
-        });
-    });
+fn bench_mixed_fat_node_queue(c: &mut Criterion) {
+    let mut group = c.benchmark_group(format!(
+        "FatQueueQueue/Ops(push: {}%, pop: {}%, per: {:+e})",
+        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+    ));
+    group.measurement_time(Duration::from_secs(5));
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(QUEUE_PER_OPS as u64));
+    bench_mixed_sequential_queue::<FatNodeQueue<_>>(
+        QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
+        QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
+        &mut group,
+    );
 }
 
 fn bench_crossbeam_seg_queue(c: &mut Criterion) {
@@ -115,6 +109,82 @@ fn bench_crossbeam_seg_queue(c: &mut Criterion) {
                 duration / (num as u32)
             });
         });
+    }
+}
+
+fn bench_mixed_flat_combining_spinlock_queue(c: &mut Criterion) {
+    let mut group = c.benchmark_group(format!(
+        "FCQueue<RawSpinLock, Queue>/Ops(push: {}%, pop: {}%, per: {:+e})",
+        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+    ));
+    group.measurement_time(Duration::from_secs(5));
+    group.sampling_mode(SamplingMode::Flat);
+
+    for num in get_test_thread_nums() {
+        group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
+        bench_mixed_concurrent_queue::<FCQueue<_, RawSpinLock, Queue<_>>>(
+            QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
+            QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
+            num,
+            &mut group,
+        );
+    }
+}
+
+fn bench_mixed_flat_combining_spinlock_fat_node_queue(c: &mut Criterion) {
+    let mut group = c.benchmark_group(format!(
+        "FCQueue<RawSpinLock, FatNodeQueue>/Ops(push: {}%, pop: {}%, per: {:+e})",
+        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+    ));
+    group.measurement_time(Duration::from_secs(5));
+    group.sampling_mode(SamplingMode::Flat);
+
+    for num in get_test_thread_nums() {
+        group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
+        bench_mixed_concurrent_queue::<FCQueue<_, RawSpinLock, FatNodeQueue<_>>>(
+            QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
+            QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
+            num,
+            &mut group,
+        );
+    }
+}
+
+fn bench_mixed_flat_combining_mutex_queue(c: &mut Criterion) {
+    let mut group = c.benchmark_group(format!(
+        "FCQueue<RawMutex, Queue>/Ops(push: {}%, pop: {}%, per: {:+e})",
+        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+    ));
+    group.measurement_time(Duration::from_secs(5));
+    group.sampling_mode(SamplingMode::Flat);
+
+    for num in get_test_thread_nums() {
+        group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
+        bench_mixed_concurrent_queue::<FCQueue<_, RawMutex, Queue<_>>>(
+            QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
+            QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
+            num,
+            &mut group,
+        );
+    }
+}
+
+fn bench_mixed_flat_combining_mutex_fat_node_queue(c: &mut Criterion) {
+    let mut group = c.benchmark_group(format!(
+        "FCQueue<RawMutex, FatNodeQueue>/Ops(push: {}%, pop: {}%, per: {:+e})",
+        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+    ));
+    group.measurement_time(Duration::from_secs(5));
+    group.sampling_mode(SamplingMode::Flat);
+
+    for num in get_test_thread_nums() {
+        group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
+        bench_mixed_concurrent_queue::<FCQueue<_, RawMutex, FatNodeQueue<_>>>(
+            QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
+            QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
+            num,
+            &mut group,
+        );
     }
 }
 
@@ -216,13 +286,19 @@ fn bench_mixed_ms_queue(c: &mut Criterion) {
 criterion_group!(
     bench,
     bench_mixed_queue,
+    bench_mixed_fat_node_queue,
     bench_crossbeam_seg_queue,
+    bench_mixed_flat_combining_spinlock_queue,
+    bench_mixed_flat_combining_spinlock_fat_node_queue,
+    bench_mixed_flat_combining_mutex_queue,
+    bench_mixed_flat_combining_mutex_fat_node_queue,
     bench_mixed_mutex_queue,
     bench_mixed_spin_lock_queue,
     bench_mixed_two_mutex_queue,
     bench_mixed_two_spin_lock_queue,
     bench_mixed_ms_queue
 );
+
 criterion_main! {
     bench,
 }

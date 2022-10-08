@@ -1,44 +1,28 @@
+mod fclock;
 mod lockfree;
 mod mutex;
 mod spinlock;
 
-use cds::queue::Queue;
+use cds::queue::{FatNodeQueue, Queue};
+
+use crate::util::queue::*;
 
 #[test]
-fn test_queue() {
-    let mut queue = Queue::new();
-    assert_eq!(queue.is_empty(), true);
-
-    queue.push(1);
-    queue.push(2);
-    queue.push(3);
-    queue.push(4);
-    queue.push(5);
-
-    assert_eq!(queue.is_empty(), false);
-    assert_eq!(queue.top(), Some(&1));
-
-    assert_eq!(queue.pop(), Some(1));
-    assert_eq!(queue.pop(), Some(2));
-    assert_eq!(queue.pop(), Some(3));
-    assert_eq!(queue.pop(), Some(4));
-    assert_eq!(queue.pop(), Some(5));
-
-    assert_eq!(queue.is_empty(), true);
-    assert_eq!(queue.pop(), None);
+fn test_simple_queue() {
+    test_simple_sequential_queue::<Queue<_>>();
 }
 
 #[test]
 fn test_deep_queue() {
-    let mut queue = Queue::new();
+    test_deep_sequential_queue::<Queue<_>>();
+}
 
-    for n in 1..100_000 {
-        queue.push(n);
-    }
+#[test]
+fn test_fat_node_queue() {
+    test_simple_sequential_queue::<FatNodeQueue<_>>();
+}
 
-    for n in 1..100_000 {
-        assert_eq!(queue.pop(), Some(n));
-    }
-
-    assert_eq!(queue.is_empty(), true);
+#[test]
+fn test_deep_fat_node_queue() {
+    test_deep_sequential_queue::<FatNodeQueue<_>>();
 }

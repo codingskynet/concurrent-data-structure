@@ -1,4 +1,5 @@
-/* This code from https://github.com/kaist-cp/cs431/blob/main/lock/src/seqlock.rs
+/*
+ * This code is refered to https://github.com/kaist-cp/cs431/blob/main/lock/src/seqlock.rs
  */
 
 use core::mem;
