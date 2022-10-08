@@ -6,32 +6,37 @@ use std::{
 
 use crossbeam_utils::Backoff;
 
+use super::RawSimpleLock;
+
 pub struct RawSpinLock {
     flag: AtomicBool,
 }
 
-impl RawSpinLock {
-    pub const fn new() -> Self {
+unsafe impl RawSimpleLock for RawSpinLock {
+    fn new() -> Self {
         Self {
             flag: AtomicBool::new(false),
         }
     }
 
     #[inline]
-    pub fn try_lock(&self) -> Result<bool, bool> {
+    fn try_lock(&self) -> bool {
         self.flag
             .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
     }
 
-    pub fn lock(&self) {
+    #[inline]
+    fn lock(&self) {
         let backoff = Backoff::new();
 
-        while self.try_lock().is_err() {
+        while !self.try_lock() {
             backoff.snooze();
         }
     }
 
-    pub fn unlock(&self) {
+    #[inline]
+    fn unlock(&self) {
         self.flag.store(false, Ordering::Release);
     }
 }

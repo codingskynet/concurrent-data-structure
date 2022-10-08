@@ -3,7 +3,10 @@ use std::{fmt::Debug, hint::unreachable_unchecked, marker::PhantomData};
 use crossbeam_epoch::pin;
 use crossbeam_utils::Backoff;
 
-use crate::lock::fclock::{FCLock, FlatCombining};
+use crate::lock::{
+    fclock::{FCLock, FlatCombining},
+    RawSimpleLock,
+};
 
 use super::{ConcurrentQueue, SequentialQueue};
 
@@ -31,23 +34,23 @@ impl<V, Q: SequentialQueue<V>> FlatCombining<QueueOp<V>> for Q {
     }
 }
 
-pub struct FCQueue<V, Q: SequentialQueue<V>> {
-    queue: FCLock<QueueOp<V>>,
+pub struct FCQueue<V, L: RawSimpleLock, Q: SequentialQueue<V>> {
+    queue: FCLock<QueueOp<V>, L>,
     _marker: PhantomData<Q>,
 }
 
-unsafe impl<V, Q: SequentialQueue<V>> Send for FCQueue<V, Q> {}
-unsafe impl<V, Q: SequentialQueue<V>> Sync for FCQueue<V, Q> {}
+unsafe impl<V, L: RawSimpleLock, Q: SequentialQueue<V>> Send for FCQueue<V, L, Q> {}
+unsafe impl<V, L: RawSimpleLock, Q: SequentialQueue<V>> Sync for FCQueue<V, L, Q> {}
 
-impl<V, Q: SequentialQueue<V>> FCQueue<V, Q> {
+impl<V, L: RawSimpleLock, Q: SequentialQueue<V>> FCQueue<V, L, Q> {
     #[cfg(feature = "concurrent_stat")]
     pub fn print_stat(&self) {
         self.queue.print_stat();
     }
 }
 
-impl<V: 'static, Q: 'static + SequentialQueue<V> + FlatCombining<QueueOp<V>>> ConcurrentQueue<V>
-    for FCQueue<V, Q>
+impl<V: 'static, L: RawSimpleLock, Q: 'static + SequentialQueue<V> + FlatCombining<QueueOp<V>>>
+    ConcurrentQueue<V> for FCQueue<V, L, Q>
 {
     fn new() -> Self {
         let queue = Q::new();

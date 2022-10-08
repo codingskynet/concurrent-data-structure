@@ -13,7 +13,7 @@ use crossbeam_epoch::{pin, unprotected, Atomic, Guard, Owned, Shared};
 use crossbeam_utils::{Backoff, CachePadded};
 use thread_local::ThreadLocal;
 
-use super::spinlock::RawSpinLock;
+use super::RawSimpleLock;
 
 pub trait FlatCombining<T> {
     fn apply(&mut self, operation: T) -> T;
@@ -74,9 +74,9 @@ impl<T: Send> Record<T> {
     }
 }
 
-pub struct FCLock<T: Send + Sync> {
+pub struct FCLock<T: Send + Sync, L: RawSimpleLock> {
     publications: Atomic<Record<T>>,
-    lock: CachePadded<RawSpinLock>,
+    lock: CachePadded<L>,
     target: UnsafeCell<Box<dyn FlatCombining<T>>>,
     thread_local: ThreadLocal<Atomic<Record<T>>>,
     age: AtomicUsize,
@@ -99,7 +99,7 @@ struct FCLockStat {
     deactivated_record: AtomicUsize,
 }
 
-impl<T: Send + Sync> Drop for FCLock<T> {
+impl<T: Send + Sync, L: RawSimpleLock> Drop for FCLock<T, L> {
     fn drop(&mut self) {
         unsafe {
             let guard = unprotected();
@@ -112,7 +112,7 @@ impl<T: Send + Sync> Drop for FCLock<T> {
     }
 }
 
-impl<T: Send + Sync> FCLock<T> {
+impl<T: Send + Sync, L: RawSimpleLock> FCLock<T, L> {
     #[inline]
     fn repush_record(&self, record: Shared<Record<T>>, guard: &Guard) {
         unsafe {
@@ -232,7 +232,7 @@ impl<T: Send + Sync> FCLock<T> {
     pub fn new(target: impl FlatCombining<T> + 'static) -> Self {
         Self {
             publications: Atomic::null(),
-            lock: CachePadded::new(RawSpinLock::new()),
+            lock: CachePadded::new(L::new()),
             target: UnsafeCell::new(Box::new(target)),
             thread_local: ThreadLocal::new(),
             age: AtomicUsize::new(0),
@@ -291,7 +291,7 @@ impl<T: Send + Sync> FCLock<T> {
         unsafe {
             let record_ref = record.deref();
 
-            if self.lock.try_lock().is_ok() {
+            if self.lock.try_lock() {
                 // now the thread is combiner
                 self.repush_record(record, guard);
 
@@ -311,7 +311,7 @@ impl<T: Send + Sync> FCLock<T> {
                     #[cfg(feature = "concurrent_stat")]
                     self.stat.passive_wait_iter.fetch_add(1, Ordering::Relaxed);
 
-                    if self.lock.try_lock().is_ok() {
+                    if self.lock.try_lock() {
                         // Another combiner is finished. So, it can receive response
 
                         if !record_ref.is_response(guard) {
