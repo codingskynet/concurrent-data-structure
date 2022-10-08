@@ -1,6 +1,13 @@
 name: test
 
-on: [push]
+on:
+  push:
+    paths:
+      - 'src/**/*'
+      - 'tests/**/*'
+      - 'benches/**/*'
+      - 'Cargo.toml'
+      - 'rust-toolchain'
 
 jobs:
   debug_build_and_test_AMD64:
