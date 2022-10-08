@@ -21,9 +21,9 @@ pub trait SequentialQueue<V> {
 pub trait ConcurrentQueue<V> {
     fn new() -> Self;
     fn push(&self, value: V);
-    // non-blocking pop that can return `None` when the queue is observed as Empty.
+    /// non-blocking pop that can return `None` when the queue is observed as Empty.
     fn try_pop(&self) -> Option<V>;
-    // blocking pop that can wait for returing value.
+    /// blocking pop that can wait for returing value.
     fn pop(&self) -> V;
 }
 
@@ -121,7 +121,7 @@ pub struct FatNodeQueue<V> {
 struct FatNode<V> {
     head: u8,
     tail: u8,
-    values: [V; FAT_SIZE as usize], // very unsafe since init_array is not stable...
+    values: [V; FAT_SIZE as usize], // very unsafe since assume_init_array is not stable...
     next: Option<NonNull<FatNode<V>>>,
 }
 

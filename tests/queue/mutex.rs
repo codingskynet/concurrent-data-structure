@@ -1,244 +1,63 @@
-use cds::queue::{ConcurrentQueue, MutexQueue, TwoMutexQueue};
-use crossbeam_utils::thread::scope;
+use cds::queue::{MutexQueue, TwoMutexQueue};
+
+use super::*;
+
+#[test]
+fn test_mutex_queue_sequential() {
+    test_sequential_concurrent_queue::<MutexQueue<_>>();
+}
 
 #[test]
 fn test_mutex_queue_simple() {
-    let queue = MutexQueue::new();
-
-    scope(|scope| {
-        for _ in 0..10 {
-            scope.spawn(|_| {
-                for i in 0..1_000 {
-                    queue.push(i);
-                    queue.pop();
-                }
-            });
-        }
-    })
-    .unwrap();
-
-    assert!(queue.try_pop().is_none());
+    test_simple_concurrent_queue::<MutexQueue<_>>();
 }
 
 #[test]
 fn test_mutex_queue_spsc() {
-    let queue = MutexQueue::new();
-
-    scope(|scope| {
-        scope.spawn(|_| {
-            for i in 0..1_000_000 {
-                queue.push(i);
-            }
-        });
-
-        scope.spawn(|_| {
-            let mut result = Vec::new();
-
-            for _ in 0..1_000_000 {
-                let n = queue.pop();
-                result.push(n);
-            }
-
-            let mut expected = result.clone();
-            expected.sort();
-
-            assert_eq!(expected, result);
-        });
-    })
-    .unwrap();
-
-    assert!(queue.try_pop().is_none());
+    test_spsc_concurrent_queue::<MutexQueue<_>>();
 }
 
 #[test]
 fn test_mutex_queue_spmc() {
-    let queue = MutexQueue::new();
-
-    scope(|scope| {
-        scope.spawn(|_| {
-            for i in 0..1_000_000 {
-                queue.push(i);
-            }
-        });
-
-        for _ in 0..10 {
-            scope.spawn(|_| {
-                for _ in 0..100_000 {
-                    queue.pop();
-                }
-            });
-        }
-    })
-    .unwrap();
-
-    assert!(queue.try_pop().is_none());
+    test_spmc_concurrent_queue::<MutexQueue<_>>();
 }
 
 #[test]
 fn test_mutex_queue_mpsc() {
-    let queue = MutexQueue::new();
-
-    scope(|scope| {
-        for _ in 0..10 {
-            scope.spawn(|_| {
-                for i in 0..100_000 {
-                    queue.push(i);
-                }
-            });
-        }
-
-        scope.spawn(|_| {
-            for _ in 0..1_000_000 {
-                queue.pop();
-            }
-        });
-    })
-    .unwrap();
-
-    assert!(queue.try_pop().is_none());
+    test_mpsc_concurrent_queue::<MutexQueue<_>>();
 }
 
 #[test]
 fn test_mutex_queue_mpmc() {
-    let queue = MutexQueue::new();
+    test_mpmc_concurrent_queue::<MutexQueue<_>>();
+}
 
-    scope(|scope| {
-        for _ in 0..10 {
-            scope.spawn(|_| {
-                for i in 0..100_000 {
-                    queue.push(i);
-                }
-            });
-
-            scope.spawn(|_| {
-                for _ in 0..100_000 {
-                    queue.pop();
-                }
-            });
-        }
-    })
-    .unwrap();
-
-    assert!(queue.try_pop().is_none());
+#[test]
+fn test_two_mutex_queue_sequential() {
+    test_sequential_concurrent_queue::<TwoMutexQueue<_>>();
 }
 
 #[test]
 fn test_two_mutex_queue_simple() {
-    let queue = TwoMutexQueue::new();
-
-    scope(|scope| {
-        for _ in 0..10 {
-            scope.spawn(|_| {
-                for i in 0..1_000 {
-                    queue.push(i);
-                    queue.pop();
-                }
-            });
-        }
-    })
-    .unwrap();
-
-    assert!(queue.try_pop().is_none());
+    test_simple_concurrent_queue::<TwoMutexQueue<_>>();
 }
 
 #[test]
 fn test_two_mutex_queue_spsc() {
-    let queue = TwoMutexQueue::new();
-
-    scope(|scope| {
-        scope.spawn(|_| {
-            for i in 0..1_000_000 {
-                queue.push(i);
-            }
-        });
-
-        scope.spawn(|_| {
-            let mut result = Vec::new();
-
-            for _ in 0..1_000_000 {
-                let n = queue.pop();
-                result.push(n);
-            }
-
-            let mut expected = result.clone();
-            expected.sort();
-
-            assert_eq!(expected, result);
-        });
-    })
-    .unwrap();
-
-    assert!(queue.try_pop().is_none());
+    test_spsc_concurrent_queue::<TwoMutexQueue<_>>();
 }
 
 #[test]
 fn test_two_mutex_queue_spmc() {
-    let queue = TwoMutexQueue::new();
-
-    scope(|scope| {
-        scope.spawn(|_| {
-            for i in 0..1_000_000 {
-                queue.push(i);
-            }
-        });
-
-        for _ in 0..10 {
-            scope.spawn(|_| {
-                for _ in 0..100_000 {
-                    queue.pop();
-                }
-            });
-        }
-    })
-    .unwrap();
-
-    assert!(queue.try_pop().is_none());
+    test_spmc_concurrent_queue::<TwoMutexQueue<_>>();
 }
 
 #[test]
 fn test_two_mutex_queue_mpsc() {
-    let queue = TwoMutexQueue::new();
-
-    scope(|scope| {
-        for _ in 0..10 {
-            scope.spawn(|_| {
-                for i in 0..100_000 {
-                    queue.push(i);
-                }
-            });
-        }
-
-        scope.spawn(|_| {
-            for _ in 0..1_000_000 {
-                queue.pop();
-            }
-        });
-    })
-    .unwrap();
-
-    assert!(queue.try_pop().is_none());
+    test_mpsc_concurrent_queue::<TwoMutexQueue<_>>();
 }
 
 #[test]
 fn test_two_mutex_queue_mpmc() {
-    let queue = TwoMutexQueue::new();
-
-    scope(|scope| {
-        for _ in 0..10 {
-            scope.spawn(|_| {
-                for i in 0..100_000 {
-                    queue.push(i);
-                }
-            });
-
-            scope.spawn(|_| {
-                for _ in 0..100_000 {
-                    queue.pop();
-                }
-            });
-        }
-    })
-    .unwrap();
-
-    assert!(queue.try_pop().is_none());
+    test_mpmc_concurrent_queue::<TwoMutexQueue<_>>();
 }

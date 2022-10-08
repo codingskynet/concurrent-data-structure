@@ -1,146 +1,63 @@
-use cds::queue::{ConcurrentQueue, FCQueue};
-use crossbeam_utils::thread::scope;
+use cds::queue::{FCQueue, Queue};
+
+use super::*;
 
 #[test]
-fn test_fc_queue_sequential() {
-    let queue = FCQueue::new();
-
-    for i in 0..1_000 {
-        queue.push(i);
-        queue.pop();
-    }
-
-    assert!(queue.try_pop().is_none());
+fn test_spin_lock_fc_queue_sequential() {
+    test_sequential_concurrent_queue::<FCQueue<_, Queue<_>>>();
 }
 
 #[test]
-fn test_fc_queue_simple() {
-    let queue = FCQueue::new();
-
-    scope(|scope| {
-        for _ in 0..10 {
-            scope.spawn(|_| {
-                for i in 0..1_000 {
-                    queue.push(i);
-                    queue.pop();
-                }
-            });
-        }
-    })
-    .unwrap();
-
-    assert!(queue.try_pop().is_none());
+fn test_spin_lock_fc_queue_simple() {
+    test_simple_concurrent_queue::<FCQueue<_, Queue<_>>>();
 }
 
 #[test]
-fn test_fc_queue_spsc() {
-    let queue = FCQueue::new();
-
-    scope(|scope| {
-        scope.spawn(|_| {
-            for i in 0..1_000_000 {
-                queue.push(i);
-            }
-        });
-
-        scope.spawn(|_| {
-            let mut result = Vec::new();
-
-            for _ in 0..1_000_000 {
-                result.push(queue.pop());
-            }
-
-            let mut expected = result.clone();
-            expected.sort();
-
-            assert_eq!(expected, result);
-        });
-    })
-    .unwrap();
-
-    assert!(queue.try_pop().is_none());
-
-    #[cfg(feature = "concurrent_stat")]
-    queue.print_stat();
+fn test_spin_lock_fc_queue_spsc() {
+    test_spsc_concurrent_queue::<FCQueue<_, Queue<_>>>();
 }
 
 #[test]
-fn test_fc_queue_spmc() {
-    let queue = FCQueue::new();
-
-    scope(|scope| {
-        scope.spawn(|_| {
-            for i in 0..1_000_000 {
-                queue.push(i);
-            }
-        });
-
-        for _ in 0..10 {
-            scope.spawn(|_| {
-                for _ in 0..100_000 {
-                    queue.pop();
-                }
-            });
-        }
-    })
-    .unwrap();
-
-    assert!(queue.try_pop().is_none());
-
-    #[cfg(feature = "concurrent_stat")]
-    queue.print_stat();
+fn test_spin_lock_fc_queue_spmc() {
+    test_spmc_concurrent_queue::<FCQueue<_, Queue<_>>>();
 }
 
 #[test]
-fn test_fc_queue_mpsc() {
-    let queue = FCQueue::new();
-
-    scope(|scope| {
-        for _ in 0..10 {
-            scope.spawn(|_| {
-                for i in 0..100_000 {
-                    queue.push(i);
-                }
-            });
-        }
-
-        scope.spawn(|_| {
-            for _ in 0..1_000_000 {
-                queue.pop();
-            }
-        });
-    })
-    .unwrap();
-
-    assert!(queue.try_pop().is_none());
-
-    #[cfg(feature = "concurrent_stat")]
-    queue.print_stat();
+fn test_spin_lock_fc_queue_mpsc() {
+    test_mpsc_concurrent_queue::<FCQueue<_, Queue<_>>>();
 }
 
 #[test]
-fn test_fc_queue_mpmc() {
-    let queue = FCQueue::new();
+fn test_spin_lock_fc_queue_mpmc() {
+    test_mpmc_concurrent_queue::<FCQueue<_, Queue<_>>>();
+}
 
-    scope(|scope| {
-        for _ in 0..10 {
-            scope.spawn(|_| {
-                for i in 0..100_000 {
-                    queue.push(i);
-                }
-            });
+#[test]
+fn test_spin_lock_fc_fat_node_queue_sequential() {
+    test_sequential_concurrent_queue::<FCQueue<_, FatNodeQueue<_>>>();
+}
 
-            scope.spawn(|_| {
-                for _ in 0..100_000 {
-                    queue.pop();
-                }
-            });
-        }
-    })
-    .unwrap();
+#[test]
+fn test_spin_lock_fc_fat_node_queue_simple() {
+    test_simple_concurrent_queue::<FCQueue<_, FatNodeQueue<_>>>();
+}
 
-    assert!(queue.try_pop().is_none());
+#[test]
+fn test_spin_lock_fc_fat_node_queue_spsc() {
+    test_spsc_concurrent_queue::<FCQueue<_, FatNodeQueue<_>>>();
+}
 
-    #[cfg(feature = "concurrent_stat")]
-    queue.print_stat();
+#[test]
+fn test_spin_lock_fc_fat_node_queue_spmc() {
+    test_spmc_concurrent_queue::<FCQueue<_, FatNodeQueue<_>>>();
+}
+
+#[test]
+fn test_spin_lock_fc_fat_node_queue_mpsc() {
+    test_mpsc_concurrent_queue::<FCQueue<_, FatNodeQueue<_>>>();
+}
+
+#[test]
+fn test_spin_lock_fc_fat_node_queue_mpmc() {
+    test_mpmc_concurrent_queue::<FCQueue<_, FatNodeQueue<_>>>();
 }
