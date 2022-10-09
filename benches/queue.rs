@@ -25,7 +25,7 @@ fn bench_crossbeam_seg_queue(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
 
     for num in get_test_thread_nums() {
-        group.measurement_time(Duration::from_secs(3 * num as u64));
+        group.measurement_time(Duration::from_secs(1 * num as u64));
         group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
         group.bench_function(&format!("{} threads", num,), |b| {
             b.iter_custom(|iters| {
@@ -84,7 +84,7 @@ fn bench_crossbeam_seg_queue(c: &mut Criterion) {
 
 fn bench_sequential<Q: SequentialQueue<u64>>(name: String, c: &mut Criterion) {
     let mut group = c.benchmark_group(name);
-    group.measurement_time(Duration::from_secs(3));
+    group.measurement_time(Duration::from_secs(1));
     group.sampling_mode(SamplingMode::Flat);
     group.throughput(Throughput::Elements(QUEUE_PER_OPS as u64));
     bench_mixed_sequential_queue::<Queue<_>>(
@@ -99,7 +99,7 @@ fn bench_concurrent<Q: Sync + ConcurrentQueue<u64>>(name: String, c: &mut Criter
     group.sampling_mode(SamplingMode::Flat);
 
     for num in get_test_thread_nums() {
-        group.measurement_time(Duration::from_secs(3 * num as u64));
+        group.measurement_time(Duration::from_secs(1 * num as u64));
         group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
         bench_mixed_concurrent_queue::<FCQueue<_, RawSpinLock, Queue<_>>>(
             QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
