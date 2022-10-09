@@ -56,10 +56,10 @@ fn bench_mixed_mutex_stack(c: &mut Criterion) {
         "MutexStack/Ops(push: {}%, pop: {}%, per: {:+e})",
         STACK_PUSH_RATE, STACK_POP_RATE, STACK_PER_OPS
     ));
-    group.measurement_time(Duration::from_secs(5));
     group.sampling_mode(SamplingMode::Flat);
 
     for num in get_test_thread_nums() {
+        group.measurement_time(Duration::from_secs(3 * num as u64));
         group.throughput(Throughput::Elements((STACK_PER_OPS * num) as u64));
         bench_mixed_concurrent_stack::<MutexStack<_>>(
             STACK_PER_OPS * STACK_PUSH_RATE / 100,
@@ -75,10 +75,10 @@ fn bench_mixed_spinlock_stack(c: &mut Criterion) {
         "SpinLockStack/Ops(push: {}%, pop: {}%, per: {:+e})",
         STACK_PUSH_RATE, STACK_POP_RATE, STACK_PER_OPS
     ));
-    group.measurement_time(Duration::from_secs(5));
     group.sampling_mode(SamplingMode::Flat);
 
     for num in get_test_thread_nums() {
+        group.measurement_time(Duration::from_secs(3 * num as u64));
         group.throughput(Throughput::Elements((STACK_PER_OPS * num) as u64));
         bench_mixed_concurrent_stack::<SpinLockStack<_>>(
             STACK_PER_OPS * STACK_PUSH_RATE / 100,
@@ -94,10 +94,10 @@ fn bench_mixed_treiber_stack(c: &mut Criterion) {
         "TreiberStack/Ops(push: {}%, pop: {}%, per: {:+e})",
         STACK_PUSH_RATE, STACK_POP_RATE, STACK_PER_OPS
     ));
-    group.measurement_time(Duration::from_secs(5));
     group.sampling_mode(SamplingMode::Flat);
 
     for num in get_test_thread_nums() {
+        group.measurement_time(Duration::from_secs(3 * num as u64));
         group.throughput(Throughput::Elements((STACK_PER_OPS * num) as u64));
         bench_mixed_concurrent_stack::<TreiberStack<_>>(
             STACK_PER_OPS * STACK_PUSH_RATE / 100,
@@ -113,10 +113,10 @@ fn bench_mixed_ebstack(c: &mut Criterion) {
         "EBStack/Ops(push: {}%, pop: {}%, per: {:+e})",
         STACK_PUSH_RATE, STACK_POP_RATE, STACK_PER_OPS
     ));
-    group.measurement_time(Duration::from_secs(5));
     group.sampling_mode(SamplingMode::Flat);
 
     for num in get_test_thread_nums() {
+        group.measurement_time(Duration::from_secs(3 * num as u64));
         group.throughput(Throughput::Elements((STACK_PER_OPS * num) as u64));
         bench_mixed_concurrent_stack::<EBStack<_>>(
             STACK_PER_OPS * STACK_PUSH_RATE / 100,

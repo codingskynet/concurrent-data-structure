@@ -17,45 +17,15 @@ const QUEUE_PER_OPS: usize = 10_000;
 const QUEUE_PUSH_RATE: usize = 50;
 const QUEUE_POP_RATE: usize = 50;
 
-fn bench_mixed_queue(c: &mut Criterion) {
-    let mut group = c.benchmark_group(format!(
-        "Queue/Ops(push: {}%, pop: {}%, per: {:+e})",
-        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
-    ));
-    group.measurement_time(Duration::from_secs(5));
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(QUEUE_PER_OPS as u64));
-    bench_mixed_sequential_queue::<Queue<_>>(
-        QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
-        QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
-        &mut group,
-    );
-}
-
-fn bench_mixed_fat_node_queue(c: &mut Criterion) {
-    let mut group = c.benchmark_group(format!(
-        "FatQueueQueue/Ops(push: {}%, pop: {}%, per: {:+e})",
-        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
-    ));
-    group.measurement_time(Duration::from_secs(5));
-    group.sampling_mode(SamplingMode::Flat);
-    group.throughput(Throughput::Elements(QUEUE_PER_OPS as u64));
-    bench_mixed_sequential_queue::<FatNodeQueue<_>>(
-        QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
-        QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
-        &mut group,
-    );
-}
-
 fn bench_crossbeam_seg_queue(c: &mut Criterion) {
     let mut group = c.benchmark_group(format!(
         "crossbeam_queue::SegQueue/Ops(push: {}%, pop: {}%, per: {:+e})",
         QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
     ));
-    group.measurement_time(Duration::from_secs(5));
     group.sampling_mode(SamplingMode::Flat);
 
     for num in get_test_thread_nums() {
+        group.measurement_time(Duration::from_secs(3 * num as u64));
         group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
         group.bench_function(&format!("{} threads", num,), |b| {
             b.iter_custom(|iters| {
@@ -112,15 +82,24 @@ fn bench_crossbeam_seg_queue(c: &mut Criterion) {
     }
 }
 
-fn bench_mixed_flat_combining_spinlock_queue(c: &mut Criterion) {
-    let mut group = c.benchmark_group(format!(
-        "FCQueue<RawSpinLock, Queue>/Ops(push: {}%, pop: {}%, per: {:+e})",
-        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
-    ));
-    group.measurement_time(Duration::from_secs(5));
+fn bench_sequential<Q: SequentialQueue<u64>>(name: String, c: &mut Criterion) {
+    let mut group = c.benchmark_group(name);
+    group.measurement_time(Duration::from_secs(3));
+    group.sampling_mode(SamplingMode::Flat);
+    group.throughput(Throughput::Elements(QUEUE_PER_OPS as u64));
+    bench_mixed_sequential_queue::<Queue<_>>(
+        QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
+        QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
+        &mut group,
+    );
+}
+
+fn bench_concurrent<Q: Sync + ConcurrentQueue<u64>>(name: String, c: &mut Criterion) {
+    let mut group = c.benchmark_group(name);
     group.sampling_mode(SamplingMode::Flat);
 
     for num in get_test_thread_nums() {
+        group.measurement_time(Duration::from_secs(3 * num as u64));
         group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
         bench_mixed_concurrent_queue::<FCQueue<_, RawSpinLock, Queue<_>>>(
             QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
@@ -131,156 +110,114 @@ fn bench_mixed_flat_combining_spinlock_queue(c: &mut Criterion) {
     }
 }
 
-fn bench_mixed_flat_combining_spinlock_fat_node_queue(c: &mut Criterion) {
-    let mut group = c.benchmark_group(format!(
-        "FCQueue<RawSpinLock, FatNodeQueue>/Ops(push: {}%, pop: {}%, per: {:+e})",
-        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
-    ));
-    group.measurement_time(Duration::from_secs(5));
-    group.sampling_mode(SamplingMode::Flat);
+fn bench_mixed_queue(c: &mut Criterion) {
+    bench_sequential::<Queue<_>>(
+        format!(
+            "Queue/Ops(push: {}%, pop: {}%, per: {:+e})",
+            QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+        ),
+        c,
+    )
+}
 
-    for num in get_test_thread_nums() {
-        group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
-        bench_mixed_concurrent_queue::<FCQueue<_, RawSpinLock, FatNodeQueue<_>>>(
-            QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
-            QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
-            num,
-            &mut group,
-        );
-    }
+fn bench_mixed_fat_node_queue(c: &mut Criterion) {
+    bench_sequential::<FatNodeQueue<_>>(
+        format!(
+            "FatQueueQueue/Ops(push: {}%, pop: {}%, per: {:+e})",
+            QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+        ),
+        c,
+    )
+}
+
+fn bench_mixed_flat_combining_spinlock_queue(c: &mut Criterion) {
+    bench_concurrent::<FCQueue<_, RawSpinLock, Queue<_>>>(
+        format!(
+            "FCQueue<RawSpinLock, Queue>/Ops(push: {}%, pop: {}%, per: {:+e})",
+            QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+        ),
+        c,
+    );
+}
+
+fn bench_mixed_flat_combining_spinlock_fat_node_queue(c: &mut Criterion) {
+    bench_concurrent::<FCQueue<_, RawSpinLock, FatNodeQueue<_>>>(
+        format!(
+            "FCQueue<RawSpinLock, FatNodeQueue>/Ops(push: {}%, pop: {}%, per: {:+e})",
+            QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+        ),
+        c,
+    );
 }
 
 fn bench_mixed_flat_combining_mutex_queue(c: &mut Criterion) {
-    let mut group = c.benchmark_group(format!(
-        "FCQueue<RawMutex, Queue>/Ops(push: {}%, pop: {}%, per: {:+e})",
-        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
-    ));
-    group.measurement_time(Duration::from_secs(5));
-    group.sampling_mode(SamplingMode::Flat);
-
-    for num in get_test_thread_nums() {
-        group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
-        bench_mixed_concurrent_queue::<FCQueue<_, RawMutex, Queue<_>>>(
-            QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
-            QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
-            num,
-            &mut group,
-        );
-    }
+    bench_concurrent::<FCQueue<_, RawMutex, Queue<_>>>(
+        format!(
+            "FCQueue<RawMutex, Queue>/Ops(push: {}%, pop: {}%, per: {:+e})",
+            QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+        ),
+        c,
+    );
 }
 
 fn bench_mixed_flat_combining_mutex_fat_node_queue(c: &mut Criterion) {
-    let mut group = c.benchmark_group(format!(
-        "FCQueue<RawMutex, FatNodeQueue>/Ops(push: {}%, pop: {}%, per: {:+e})",
-        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
-    ));
-    group.measurement_time(Duration::from_secs(5));
-    group.sampling_mode(SamplingMode::Flat);
-
-    for num in get_test_thread_nums() {
-        group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
-        bench_mixed_concurrent_queue::<FCQueue<_, RawMutex, FatNodeQueue<_>>>(
-            QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
-            QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
-            num,
-            &mut group,
-        );
-    }
+    bench_concurrent::<FCQueue<_, RawMutex, FatNodeQueue<_>>>(
+        format!(
+            "FCQueue<RawMutex, FatNodeQueue>/Ops(push: {}%, pop: {}%, per: {:+e})",
+            QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+        ),
+        c,
+    );
 }
 
 fn bench_mixed_mutex_queue(c: &mut Criterion) {
-    let mut group = c.benchmark_group(format!(
-        "MutexQueue/Ops(push: {}%, pop: {}%, per: {:+e})",
-        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
-    ));
-    group.measurement_time(Duration::from_secs(5));
-    group.sampling_mode(SamplingMode::Flat);
-
-    for num in get_test_thread_nums() {
-        group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
-        bench_mixed_concurrent_queue::<MutexQueue<_>>(
-            QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
-            QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
-            num,
-            &mut group,
-        );
-    }
+    bench_concurrent::<MutexQueue<_>>(
+        format!(
+            "MutexQueue/Ops(push: {}%, pop: {}%, per: {:+e})",
+            QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+        ),
+        c,
+    );
 }
 
 fn bench_mixed_two_mutex_queue(c: &mut Criterion) {
-    let mut group = c.benchmark_group(format!(
-        "TwoMutexQueue/Ops(push: {}%, pop: {}%, per: {:+e})",
-        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
-    ));
-    group.measurement_time(Duration::from_secs(5));
-    group.sampling_mode(SamplingMode::Flat);
-
-    for num in get_test_thread_nums() {
-        group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
-        bench_mixed_concurrent_queue::<TwoMutexQueue<_>>(
-            QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
-            QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
-            num,
-            &mut group,
-        );
-    }
+    bench_concurrent::<TwoMutexQueue<_>>(
+        format!(
+            "TwoMutexQueue/Ops(push: {}%, pop: {}%, per: {:+e})",
+            QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+        ),
+        c,
+    );
 }
 
 fn bench_mixed_spin_lock_queue(c: &mut Criterion) {
-    let mut group = c.benchmark_group(format!(
-        "SpinLockQueue/Ops(push: {}%, pop: {}%, per: {:+e})",
-        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
-    ));
-    group.measurement_time(Duration::from_secs(5));
-    group.sampling_mode(SamplingMode::Flat);
-
-    for num in get_test_thread_nums() {
-        group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
-        bench_mixed_concurrent_queue::<SpinLockQueue<_>>(
-            QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
-            QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
-            num,
-            &mut group,
-        );
-    }
+    bench_concurrent::<SpinLockQueue<_>>(
+        format!(
+            "SpinLockQueue/Ops(push: {}%, pop: {}%, per: {:+e})",
+            QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+        ),
+        c,
+    );
 }
 
 fn bench_mixed_two_spin_lock_queue(c: &mut Criterion) {
-    let mut group = c.benchmark_group(format!(
-        "TwoSpinLockQueue/Ops(push: {}%, pop: {}%, per: {:+e})",
-        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
-    ));
-    group.measurement_time(Duration::from_secs(5));
-    group.sampling_mode(SamplingMode::Flat);
-
-    for num in get_test_thread_nums() {
-        group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
-        bench_mixed_concurrent_queue::<TwoSpinLockQueue<_>>(
-            QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
-            QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
-            num,
-            &mut group,
-        );
-    }
+    bench_concurrent::<TwoSpinLockQueue<_>>(
+        format!(
+            "TwoSpinLockQueue/Ops(push: {}%, pop: {}%, per: {:+e})",
+            QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+        ),
+        c,
+    );
 }
 
 fn bench_mixed_ms_queue(c: &mut Criterion) {
-    let mut group = c.benchmark_group(format!(
-        "MsQueue/Ops(push: {}%, pop: {}%, per: {:+e})",
-        QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
-    ));
-    group.measurement_time(Duration::from_secs(5));
-    group.sampling_mode(SamplingMode::Flat);
-
-    for num in get_test_thread_nums() {
-        group.throughput(Throughput::Elements((QUEUE_PER_OPS * num) as u64));
-        bench_mixed_concurrent_queue::<MSQueue<_>>(
-            QUEUE_PER_OPS * QUEUE_PUSH_RATE / 100,
-            QUEUE_PER_OPS * QUEUE_POP_RATE / 100,
-            num,
-            &mut group,
-        );
-    }
+    bench_concurrent::<MSQueue<_>>(
+        format!(
+            "MSQueue/Ops(push: {}%, pop: {}%, per: {:+e})",
+            QUEUE_PUSH_RATE, QUEUE_POP_RATE, QUEUE_PER_OPS
+        ),
+        c,
+    );
 }
 
 criterion_group!(

@@ -11,7 +11,7 @@ pub fn get_test_thread_nums() -> Vec<usize> {
 
     let mut num = 1;
 
-    while num <= logical_cores {
+    while num <= 2 * logical_cores {
         nums.push(num);
 
         if num <= 16 {
