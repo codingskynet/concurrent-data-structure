@@ -12,7 +12,7 @@ Implement sequential, lock-based and lock-free concurrent data structures below:
 ## Benchmark
 You can run bench like this:
 ```bash
-cargo install criterion
+cargo install cargo-criterion
 # default feature has accumulating stats on available structure.
 cargo criterion --bench {bench_name} --no-default-features
 ```
