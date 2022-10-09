@@ -21,7 +21,7 @@ Available Benches:
 - stack
 - queue
 - avltree
-- btrees
+- btree
 
 ## Profile
 
