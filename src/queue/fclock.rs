@@ -1,6 +1,6 @@
 use std::{fmt::Debug, hint::unreachable_unchecked, marker::PhantomData};
 
-use crossbeam_epoch::pin;
+use crossbeam_epoch::unprotected;
 use crossbeam_utils::Backoff;
 
 use crate::lock::{
@@ -62,7 +62,7 @@ impl<V: 'static, L: RawSimpleLock, Q: 'static + SequentialQueue<V> + FlatCombini
     }
 
     fn push(&self, value: V) {
-        let guard = pin();
+        let guard = unsafe { unprotected() };
 
         let record = self.queue.acquire_record(&guard);
         let record_ref = unsafe { record.deref() };
@@ -73,7 +73,7 @@ impl<V: 'static, L: RawSimpleLock, Q: 'static + SequentialQueue<V> + FlatCombini
     }
 
     fn try_pop(&self) -> Option<V> {
-        let guard = pin();
+        let guard = unsafe { unprotected() };
 
         let record = self.queue.acquire_record(&guard);
         let record_ref = unsafe { record.deref() };

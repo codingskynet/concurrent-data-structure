@@ -246,7 +246,7 @@ impl<V> SequentialQueue<V> for FatNodeQueue<V> {
 
                 if next_ref.head == FAT_SIZE {
                     self.head = next;
-                    drop(Box::from(head));
+                    drop(Box::from_raw(head));
                 }
 
                 Some(value)

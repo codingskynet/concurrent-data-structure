@@ -9,7 +9,7 @@ use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
-use crossbeam_epoch::{pin, unprotected, Atomic, Guard, Owned, Shared};
+use crossbeam_epoch::{unprotected, Atomic, Guard, Owned, Shared};
 use crossbeam_utils::{Backoff, CachePadded};
 use thread_local::ThreadLocal;
 
@@ -32,9 +32,9 @@ pub struct Record<T> {
 
 impl<T: Debug> Debug for Record<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let guard = &pin();
-
         unsafe {
+            let guard = unprotected();
+
             let mut debug = f.debug_struct("Record");
 
             if let Some(operation) = self.operation.load(Ordering::SeqCst, guard).as_ref() {
@@ -70,7 +70,13 @@ impl<T: Send> Record<T> {
 
     #[inline]
     pub fn get_operation(&self, guard: &Guard) -> T {
-        unsafe { ptr::read(self.operation.load(Ordering::Relaxed, guard).deref()) }
+        unsafe {
+            *self
+                .operation
+                .load(Ordering::Relaxed, guard)
+                .into_owned()
+                .into_box()
+        }
     }
 }
 
@@ -160,22 +166,24 @@ impl<T: Send + Sync, L: RawSimpleLock> FCLock<T, L> {
             let mut node = self.publications.load(Ordering::Acquire, guard);
 
             while !node.is_null() {
-                let node_ref = node.deref();
+                let node_ref = node.deref_mut();
 
                 if node_ref.state.load(Ordering::Acquire) {
                     // active record
-                    let operation = node_ref.operation.load(Ordering::Acquire, guard);
+                    let shared_op = node_ref.operation.load(Ordering::Acquire, guard);
 
-                    if operation.tag() == 1 {
-                        let operation = ptr::read(operation.deref());
+                    if shared_op.tag() == 1 {
+                        let op = ptr::read(shared_op.deref());
 
                         node_ref.age.store(current_age, Ordering::Relaxed);
 
-                        let response = target.apply(operation);
+                        let response = target.apply(op);
 
                         node_ref
                             .operation
                             .store(Owned::new(response).with_tag(0), Ordering::Release);
+
+                        guard.defer_destroy(shared_op);
 
                         is_done = true;
                     }
