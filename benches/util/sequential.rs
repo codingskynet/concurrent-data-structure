@@ -3,9 +3,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use cds::{map::SequentialMap, util::random::Random};
+use cds::{map::SequentialMap, queue::SequentialQueue, util::random::Random};
 use criterion::{black_box, measurement::WallTime, BenchmarkGroup};
-use rand::{prelude::SliceRandom, thread_rng};
+use rand::{prelude::SliceRandom, thread_rng, Rng};
 
 #[derive(Clone, Copy)]
 pub enum Op<K, V> {
@@ -43,7 +43,9 @@ pub fn fuzz_sequential_logs<K: Ord + Clone + Random, V: Clone + Random>(
             if i % 2 == 0 {
                 logs.push(Op::Lookup(K::gen(&mut rng)));
             } else {
-                logs.push(Op::Lookup(pre_inserted.choose(&mut rng).cloned().unwrap().0));
+                logs.push(Op::Lookup(
+                    pre_inserted.choose(&mut rng).cloned().unwrap().0,
+                ));
             }
         }
 
@@ -51,7 +53,9 @@ pub fn fuzz_sequential_logs<K: Ord + Clone + Random, V: Clone + Random>(
             if i % 2 == 0 {
                 logs.push(Op::Remove(K::gen(&mut rng)));
             } else {
-                logs.push(Op::Remove(pre_inserted.choose(&mut rng).cloned().unwrap().0));
+                logs.push(Op::Remove(
+                    pre_inserted.choose(&mut rng).cloned().unwrap().0,
+                ));
             }
         }
 
@@ -60,6 +64,41 @@ pub fn fuzz_sequential_logs<K: Ord + Clone + Random, V: Clone + Random>(
     }
 
     result
+}
+
+pub fn bench_mixed_sequential_queue<S>(push: usize, pop: usize, c: &mut BenchmarkGroup<WallTime>)
+where
+    S: SequentialQueue<u64>,
+{
+    let per_ops = push + pop;
+
+    c.bench_function("sequential", |b| {
+        b.iter_custom(|iters| {
+            let mut queue = S::new();
+
+            let mut duration = Duration::ZERO;
+
+            for _ in 0..iters {
+                let mut rng = thread_rng();
+
+                let op_idx = rng.gen_range(0..per_ops);
+
+                if op_idx < per_ops {
+                    let value: u64 = rng.gen();
+
+                    let start = Instant::now();
+                    let _ = black_box(queue.push(value));
+                    duration += start.elapsed();
+                } else {
+                    let start = Instant::now();
+                    let _ = black_box(queue.pop());
+                    duration += start.elapsed();
+                }
+            }
+
+            duration
+        });
+    });
 }
 
 pub fn bench_logs_btreemap<K: Ord, V>(mut logs: Logs<K, V>, c: &mut BenchmarkGroup<WallTime>) {

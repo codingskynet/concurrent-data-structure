@@ -1,4 +1,5 @@
-/* This code from https://github.com/kaist-cp/cs431/blob/main/lock/src/seqlock.rs
+/*
+ * This code is refered to https://github.com/kaist-cp/cs431/blob/main/lock/src/seqlock.rs
  */
 
 use core::mem;
@@ -8,18 +9,18 @@ use core::sync::atomic::{fence, AtomicUsize, Ordering};
 use crossbeam_utils::Backoff;
 
 #[derive(Debug)]
-pub struct RawSeqLock {
+struct RawSeqLock {
     seq: AtomicUsize,
 }
 
 impl RawSeqLock {
-    pub const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             seq: AtomicUsize::new(0),
         }
     }
 
-    pub fn write_lock(&self) -> usize {
+    fn write_lock(&self) -> usize {
         let backoff = Backoff::new();
 
         loop {
@@ -43,11 +44,11 @@ impl RawSeqLock {
         }
     }
 
-    pub fn write_unlock(&self, seq: usize) {
+    fn write_unlock(&self, seq: usize) {
         self.seq.store(seq.wrapping_add(2), Ordering::Release);
     }
 
-    pub fn read_begin(&self) -> usize {
+    fn read_begin(&self) -> usize {
         let backoff = Backoff::new();
 
         loop {
@@ -60,13 +61,13 @@ impl RawSeqLock {
         }
     }
 
-    pub fn read_validate(&self, seq: usize) -> bool {
+    fn read_validate(&self, seq: usize) -> bool {
         fence(Ordering::Acquire);
 
         seq == self.seq.load(Ordering::Relaxed)
     }
 
-    pub unsafe fn upgrade(&self, seq: usize) -> Result<(), ()> {
+    unsafe fn upgrade(&self, seq: usize) -> Result<(), ()> {
         if self
             .seq
             .compare_exchange(
@@ -176,6 +177,12 @@ impl<'s, T> Clone for ReadGuard<'s, T> {
     }
 }
 
+impl<'s, T> Drop for ReadGuard<'s, T> {
+    fn drop(&mut self) {
+        panic!("For safety, seqlock::ReadGuard cannot be dropped. Use finish or forget.");
+    }
+}
+
 impl<'s, T> ReadGuard<'s, T> {
     pub fn validate(&self) -> bool {
         self.lock.lock.read_validate(self.seq)
@@ -189,6 +196,11 @@ impl<'s, T> ReadGuard<'s, T> {
         let result = self.lock.lock.read_validate(self.seq);
         mem::forget(self);
         result
+    }
+
+    /// Just forget ReadGuard without validation. Carefully use it only if it does not need to be validated.
+    pub fn forget(self) {
+        mem::forget(self);
     }
 
     pub fn upgrade(self) -> Result<WriteGuard<'s, T>, ()> {

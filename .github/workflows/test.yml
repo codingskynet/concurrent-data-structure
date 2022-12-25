@@ -1,0 +1,38 @@
+name: test
+
+on:
+  push:
+    paths:
+      - 'src/**/*'
+      - 'tests/**/*'
+      - 'benches/**/*'
+      - 'Cargo.toml'
+      - 'rust-toolchain'
+
+jobs:
+  debug_build_and_test_AMD64:
+    name: Build & Test(Debug) on AMD64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/cache@v3
+        env:
+          cache-name: debug-cache
+        with:
+          path: ~/target
+          key: ${{ runner.os }}-build-${{ env.cache-name }}
+      - uses: actions-rs/toolchain@v1
+      - run: RUST_MIN_STACK=33554432 cargo test -- --nocapture
+  release_build_and_test_AMD64:
+    name: Build & Test(Release) on AMD64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/cache@v3
+        env:
+          cache-name: release-cache
+        with:
+          path: ~/target
+          key: ${{ runner.os }}-build-${{ env.cache-name }}
+      - uses: actions-rs/toolchain@v1
+      - run: RUST_MIN_STACK=33554432 cargo test --release -- --nocapture

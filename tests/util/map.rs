@@ -1,7 +1,6 @@
 use cds::map::ConcurrentMap;
 use cds::map::SequentialMap;
 use cds::util::random::Random;
-use crossbeam_epoch::pin;
 use crossbeam_utils::thread;
 use rand::prelude::SliceRandom;
 use rand::prelude::ThreadRng;
@@ -57,9 +56,7 @@ where
     let mut ref_map: BTreeMap<K, u64> = BTreeMap::new();
     let mut rng = thread_rng();
 
-    for i in 1..=iter {
-        let before = format!("{:?}", map);
-
+    for _ in 1..=iter {
         let t = types.choose(&mut rng).unwrap();
         let ref_map_keys = ref_map.keys().collect::<Vec<&K>>();
         let existing_key = ref_map_keys.choose(&mut rng);
@@ -77,22 +74,22 @@ where
                     // should success
                     let value: u64 = rng.gen();
 
-                    println!(
-                        "[{:0>10}] InsertNone: ({:?}, {})",
-                        i, not_existing_key, value
-                    );
+                    // println!(
+                    //     "[{:0>10}] InsertNone: ({:?}, {})",
+                    //     i, not_existing_key, value
+                    // );
                     assert_eq!(ref_map.insert(not_existing_key.clone(), value), None);
                     assert_eq!(map.insert(&not_existing_key, value), Ok(()));
                 }
                 Operation::Lookup => {
                     // should fail
-                    println!("[{:0>10}] LookupNone: ({:?}, None)", i, not_existing_key);
+                    // println!("[{:0>10}] LookupNone: ({:?}, None)", i, not_existing_key);
                     assert_eq!(ref_map.get(&not_existing_key), None);
                     assert_eq!(map.lookup(&not_existing_key), None);
                 }
                 Operation::Remove => {
                     // should fail
-                    println!("[{:0>10}] RemoveNone: ({:?}, Err)", i, not_existing_key);
+                    // println!("[{:0>10}] RemoveNone: ({:?}, Err)", i, not_existing_key);
                     assert_eq!(ref_map.remove(&not_existing_key), None);
                     assert_eq!(map.remove(&not_existing_key), Err(()));
                 }
@@ -106,44 +103,44 @@ where
                     // should fail
                     let value: u64 = rng.gen();
 
-                    println!("[{:0>10}] InsertSome: ({:?}, {})", i, existing_key, value);
+                    // println!("[{:0>10}] InsertSome: ({:?}, {})", i, existing_key, value);
                     assert_eq!(map.insert(&existing_key, value), Err(value));
                 }
                 Operation::Lookup => {
                     // should success
                     let value = ref_map.get(&existing_key);
 
-                    println!(
-                        "[{:0>10}] LookupSome: ({:?}, {})",
-                        i,
-                        existing_key,
-                        value.unwrap()
-                    );
+                    // println!(
+                    //     "[{:0>10}] LookupSome: ({:?}, {})",
+                    //     i,
+                    //     existing_key,
+                    //     value.unwrap()
+                    // );
                     assert_eq!(map.lookup(&existing_key), value);
                 }
                 Operation::Remove => {
                     // should success
                     let value = ref_map.remove(&existing_key);
 
-                    println!(
-                        "[{:0>10}] RemoveSome: ({:?}, {})",
-                        i,
-                        existing_key,
-                        value.unwrap()
-                    );
+                    // println!(
+                    //     "[{:0>10}] RemoveSome: ({:?}, {})",
+                    //     i,
+                    //     existing_key,
+                    //     value.unwrap()
+                    // );
                     assert_eq!(map.remove(&existing_key).ok(), value);
                 }
             }
         }
 
         // early stop code if the op has any problems
-        for key in ref_map.keys().collect::<Vec<&K>>() {
-            if map.lookup(key).is_none() {
-                println!("before: {}", before);
-                println!("after: {:?}", map);
-                panic!("the key {:?} is not found.", key);
-            }
-        }
+        // for key in ref_map.keys().collect::<Vec<&K>>() {
+        //     if map.lookup(key).is_none() {
+        //         println!("before: {}", before);
+        //         println!("after: {:?}", map);
+        //         panic!("the key {:?} is not found.", key);
+        //     }
+        // }
     }
 }
 
@@ -175,11 +172,11 @@ where
     }
 
     fn insert(&mut self, key: &K, value: V) -> Result<(), V> {
-        self.inner.insert(key, value, &pin())
+        self.inner.insert(key, value)
     }
 
     fn lookup(&self, key: &K) -> Option<&V> {
-        let value = self.inner.get(key, &pin());
+        let value = self.inner.get(key);
 
         // HACK: temporarily save the value, and get its reference safely
         unsafe {
@@ -189,7 +186,7 @@ where
     }
 
     fn remove(&mut self, key: &K) -> Result<V, ()> {
-        self.inner.remove(key, &pin())
+        self.inner.remove(key)
     }
 }
 
@@ -245,7 +242,7 @@ where
                         Operation::Insert => {
                             let value = u64::gen(&mut rng);
                             let start = Instant::now();
-                            let result = match map.insert(&key, value, &pin()) {
+                            let result = match map.insert(&key, value) {
                                 Ok(()) => Ok(value),
                                 Err(_) => Err(()),
                             };
@@ -255,7 +252,7 @@ where
                         }
                         Operation::Lookup => {
                             let start = Instant::now();
-                            let result = match map.get(&key, &pin()) {
+                            let result = match map.get(&key) {
                                 Some(value) => Ok(value),
                                 None => Err(()),
                             };
@@ -265,7 +262,7 @@ where
                         }
                         Operation::Remove => {
                             let start = Instant::now();
-                            let result = map.remove(&key, &pin());
+                            let result = map.remove(&key);
                             let end = Instant::now();
 
                             (start, result, end)
@@ -300,7 +297,7 @@ where
     .unwrap();
 
     if assert_log {
-        println!("Asserting logs...");
+        // println!("Asserting logs...");
         assert_logs(logs);
     }
 }
@@ -318,7 +315,6 @@ fn assert_logs<K: Ord + Hash + Clone + Debug>(logs: Vec<Log<K, u64>>) {
     }
 
     for (key, mut key_logs) in key_logs {
-        // println!("key: {:?}, num: {}", key, key_logs.len());
         key_logs.sort_by(|a, b| a.start.cmp(&b.start));
 
         let mut value_logs = HashMap::new();

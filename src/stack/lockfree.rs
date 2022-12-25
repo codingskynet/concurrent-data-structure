@@ -1,14 +1,10 @@
 use std::{mem::ManuallyDrop, ptr, sync::atomic::Ordering, thread, time::Duration};
 
-use crossbeam_epoch::{Atomic, Guard, Owned, Shared};
+use crossbeam_epoch::{pin, Atomic, Guard, Owned, Shared};
 use crossbeam_utils::Backoff;
 use rand::{thread_rng, Rng};
 
-pub trait ConcurrentStack<V> {
-    fn new() -> Self;
-    fn push(&self, value: V, guard: &Guard);
-    fn pop(&self, guard: &Guard) -> Option<V>;
-}
+use super::ConcurrentStack;
 
 pub struct TreiberStack<V> {
     head: Atomic<Node<V>>,
@@ -35,22 +31,22 @@ impl<V> Node<V> {
 }
 
 impl<V> TreiberStack<V> {
-    pub fn is_empty(&self, guard: &Guard) -> bool {
-        self.head.load(Ordering::Relaxed, guard).is_null()
+    pub fn is_empty(&self) -> bool {
+        self.head.load(Ordering::Relaxed, &pin()).is_null()
     }
 
-    pub fn top(&self, guard: &Guard) -> Option<V>
+    pub fn top(&self) -> Option<V>
     where
         V: Clone,
     {
-        if let Some(node) = unsafe { self.head.load(Ordering::Acquire, guard).as_ref() } {
+        if let Some(node) = unsafe { self.head.load(Ordering::Acquire, &pin()).as_ref() } {
             Some(ManuallyDrop::into_inner(node.value.clone()))
         } else {
             None
         }
     }
 
-    fn try_push(&self, node: Owned<Node<V>>, guard: &Guard) -> Result<(), Owned<Node<V>>> {
+    fn treiber_try_push(&self, node: Owned<Node<V>>, guard: &Guard) -> Result<(), Owned<Node<V>>> {
         let head = self.head.load(Ordering::Relaxed, guard);
         node.next.store(head, Ordering::Relaxed);
 
@@ -63,7 +59,7 @@ impl<V> TreiberStack<V> {
         }
     }
 
-    fn try_pop(&self, guard: &Guard) -> Result<Option<V>, ()> {
+    fn treiber_try_pop(&self, guard: &Guard) -> Result<Option<V>, ()> {
         let head = self.head.load(Ordering::Acquire, guard);
 
         if let Some(h) = unsafe { head.as_ref() } {
@@ -92,22 +88,39 @@ impl<V> ConcurrentStack<V> for TreiberStack<V> {
         }
     }
 
-    fn push(&self, value: V, guard: &Guard) {
+    fn push(&self, value: V) {
+        let guard = pin();
+
         let mut node = Owned::new(Node::new(value));
         let backoff = Backoff::new();
 
-        while let Err(e) = self.try_push(node, guard) {
+        while let Err(e) = self.treiber_try_push(node, &guard) {
             node = e;
             backoff.spin();
         }
     }
 
-    fn pop(&self, guard: &Guard) -> Option<V> {
+    fn try_pop(&self) -> Option<V> {
+        let guard = pin();
+
         let backoff = Backoff::new();
 
         loop {
-            if let Ok(value) = self.try_pop(guard) {
+            if let Ok(value) = self.treiber_try_pop(&guard) {
                 return value;
+            }
+
+            backoff.spin();
+        }
+    }
+
+    fn pop(&self) -> V {
+        let backoff = Backoff::new();
+
+        loop {
+            match self.try_pop() {
+                Some(value) => return value,
+                None => {}
             }
 
             backoff.spin();
@@ -115,8 +128,8 @@ impl<V> ConcurrentStack<V> for TreiberStack<V> {
     }
 }
 
-const ELIM_SIZE: usize = 10;
-const ELIM_DELAY: Duration = Duration::from_millis(10);
+const ELIM_SIZE: usize = 4;
+const ELIM_DELAY: Duration = Duration::from_millis(1);
 
 /// Elimination-Backoff Stack
 ///
@@ -142,8 +155,8 @@ impl<V> Default for EBStack<V> {
 }
 
 impl<V> EBStack<V> {
-    fn try_push(&self, node: Owned<Node<V>>, guard: &Guard) -> Result<(), Owned<Node<V>>> {
-        let node = match self.stack.try_push(node, guard) {
+    fn elem_try_push(&self, node: Owned<Node<V>>, guard: &Guard) -> Result<(), Owned<Node<V>>> {
+        let node = match self.stack.treiber_try_push(node, guard) {
             Ok(_) => return Ok(()),
             Err(node) => node.into_shared(guard),
         };
@@ -194,8 +207,8 @@ impl<V> EBStack<V> {
         Ok(())
     }
 
-    fn try_pop(&self, guard: &Guard) -> Result<Option<V>, ()> {
-        if let Ok(value) = self.stack.try_pop(guard) {
+    fn elem_try_pop(&self, guard: &Guard) -> Result<Option<V>, ()> {
+        if let Ok(value) = self.stack.treiber_try_pop(guard) {
             return Ok(value);
         }
 
@@ -248,19 +261,36 @@ impl<V> ConcurrentStack<V> for EBStack<V> {
         }
     }
 
-    fn push(&self, value: V, guard: &Guard) {
+    fn push(&self, value: V) {
+        let guard = pin();
+
         let mut node = Owned::new(Node::new(value));
 
-        while let Err(e) = self.try_push(node, guard) {
+        while let Err(e) = self.elem_try_push(node, &guard) {
             node = e;
         }
     }
 
-    fn pop(&self, guard: &Guard) -> Option<V> {
+    fn try_pop(&self) -> Option<V> {
+        let guard = pin();
+
         loop {
-            if let Ok(value) = self.try_pop(guard) {
+            if let Ok(value) = self.elem_try_pop(&guard) {
                 return value;
             }
+        }
+    }
+
+    fn pop(&self) -> V {
+        let backoff = Backoff::new();
+
+        loop {
+            match self.try_pop() {
+                Some(value) => return value,
+                None => {}
+            }
+
+            backoff.spin();
         }
     }
 }
