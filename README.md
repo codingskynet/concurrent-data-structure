@@ -51,7 +51,7 @@ sudo cargo flamegraph --no-default-features --test tests -- {test_name}
 - Michael-Scott queue
 
 ### Linked List
-- TODO: implement Harris linked list
+- Harris List
 
 ### AVL Tree
 - SeqLockAVLTree, RwLockAVLTree(use crossbeam_utils::sync::ShardedLock)
@@ -75,6 +75,9 @@ sudo cargo flamegraph --no-default-features --test tests -- {test_name}
 
 ### Queue
 - two lock queue, Michael-Scott Queue: https://www.cs.rochester.edu/~scott/papers/1996_PODC_queues.pdf
+
+### List
+- Harris List: https://www.cl.cam.ac.uk/research/srg/netos/papers/2001-caslists.pdf
 
 ### Binary Search Tree
 - AVL Tree: https://stanford-ppl.github.io/website/papers/ppopp207-bronson.pdf
