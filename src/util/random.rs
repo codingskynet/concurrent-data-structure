@@ -6,7 +6,7 @@ pub trait Random {
 }
 
 const RANDOM_STRING_MIN: usize = 0;
-const RANDOM_STRING_MAX: usize = 10;
+const RANDOM_STRING_MAX: usize = 128;
 
 impl Random for String {
     // get random string whose length is in [RANDOM_STRING_MIN, RANDOM_STRING_MAX)

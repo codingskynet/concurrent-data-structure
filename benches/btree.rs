@@ -22,7 +22,7 @@ const OPS_RATE: [(usize, usize, usize); 7] = [
     (50, 0, 50),
 ];
 
-fn bench_vs_btreemap(c: &mut Criterion) {
+fn bench_u64_vs_btreemap(c: &mut Criterion) {
     for (insert, lookup, remove) in OPS_RATE {
         let logs = fuzz_sequential_logs(
             200,
@@ -42,12 +42,10 @@ fn bench_vs_btreemap(c: &mut Criterion) {
         group.throughput(Throughput::Elements(MAP_TOTAL_OPS as u64));
 
         bench_logs_btreemap(logs.clone(), &mut group);
-        bench_logs_sequential_map::<BTree<_, _>>("BTree", logs.clone(), &mut group);
-        bench_logs_sequential_map::<AVLTree<_, _>>("AVLTree", logs, &mut group);
+        bench_logs_sequential_map::<u64, u64, BTree<_, _>>("BTree", logs.clone(), &mut group);
+        bench_logs_sequential_map::<u64, u64, AVLTree<_, _>>("AVLTree", logs, &mut group);
     }
 }
 
-criterion_group!(bench, bench_vs_btreemap);
-criterion_main! {
-    bench,
-}
+criterion_group!(bench, bench_u64_vs_btreemap);
+criterion_main! {bench}

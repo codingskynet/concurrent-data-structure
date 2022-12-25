@@ -1,5 +1,6 @@
 pub mod avltree;
 pub mod btree;
+pub mod art;
 pub mod linkedlist;
 pub mod lock;
 pub mod map;
