@@ -1,3 +1,5 @@
+mod utf8art;
+
 use std::{
     cmp::{min, Ordering},
     marker::PhantomData,
