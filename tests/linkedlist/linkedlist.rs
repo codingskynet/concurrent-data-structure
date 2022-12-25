@@ -1,10 +1,11 @@
 use crate::util::map::stress_sequential;
-use cds::linkedlist::LinkedList;
+use cds::linkedlist::SortedList;
 use cds::map::SequentialMap;
+use rand::{thread_rng, Rng};
 
 #[test]
-fn test_linkedlist() {
-    let mut list: LinkedList<i32, i32> = LinkedList::new();
+fn test_sorted_list() {
+    let mut list: SortedList<i32, i32> = SortedList::new();
 
     assert_eq!(list.lookup(&1), None);
 
@@ -40,6 +41,24 @@ fn test_linkedlist() {
 }
 
 #[test]
-fn stress_linkedlist() {
-    stress_sequential::<String, LinkedList<_, _>>(100_000);
+fn test_sorted_list_is_sorted() {
+    let mut list: SortedList<i32, i32> = SortedList::new();
+
+    let mut rng = thread_rng();
+
+    for _ in 0..100 {
+        let val = rng.gen_range(0..39393939);
+        assert_eq!(list.insert(&val, val), Ok(()));
+    }
+
+    list.keys()
+        .windows(2)
+        .enumerate()
+        .map(|(i, n)| assert!(n[0] < n[1], "{} < {} on {}", n[0], n[1], i))
+        .nth(98);
+}
+
+#[test]
+fn stress_sorted_list() {
+    stress_sequential::<String, SortedList<_, _>>(100_000);
 }

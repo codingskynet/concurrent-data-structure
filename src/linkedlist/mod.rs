@@ -1,14 +1,23 @@
-use crate::map::SequentialMap;
+mod harris;
 
-// simple sequential linked list
-pub struct LinkedList<K, V> {
-    head: Node<K, V>, // dummy node with key = Default, but the key is not considered on algorithm
-}
+use std::{fmt::Debug, mem};
+
+use crate::map::SequentialMap;
 
 struct Node<K, V> {
     key: K,
     value: V,
     next: Option<Box<Node<K, V>>>,
+}
+
+impl<K: Debug, V: Debug> Debug for Node<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Node")
+            .field("key", &self.key)
+            .field("value", &self.value)
+            .field("next", &self.next)
+            .finish()
+    }
 }
 
 impl<K: Default, V: Default> Default for Node<K, V> {
@@ -27,35 +36,70 @@ impl<K, V> Node<K, V> {
     }
 }
 
-impl<K, V> SequentialMap<K, V> for LinkedList<K, V>
+// simple sequential sorted linked list
+pub struct SortedList<K, V> {
+    head: Node<K, V>, // dummy node with key = Default, but the key is not considered on algorithm
+}
+
+impl<K: Debug, V: Debug> Debug for SortedList<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SortedList")
+            .field("head", &self.head)
+            .finish()
+    }
+}
+
+impl<K, V> SortedList<K, V> {
+    pub fn keys(&self) -> Vec<&K> {
+        let mut result = Vec::new();
+
+        let mut node = &self.head.next;
+
+        while let Some(inner) = node {
+            result.push(&inner.key);
+            node = &inner.next;
+        }
+
+        result
+    }
+}
+
+impl<K, V> SequentialMap<K, V> for SortedList<K, V>
 where
-    K: Default + Eq + Clone,
+    K: Default + Eq + PartialOrd + Clone,
     V: Default,
 {
-    fn new() -> LinkedList<K, V> {
-        LinkedList {
+    fn new() -> SortedList<K, V> {
+        SortedList {
             head: Node::default(),
         }
     }
 
     fn insert(&mut self, key: &K, value: V) -> Result<(), V> {
-        let new = Box::new(Node::new(key.clone(), value));
+        let mut new = Box::new(Node::new(key.clone(), value));
 
-        let mut current = &mut self.head.next;
+        let mut current = &mut self.head;
 
         loop {
-            match current {
-                Some(node) => {
-                    if node.key == *key {
-                        return Err(new.value);
-                    }
+            let next = &mut current.next;
 
-                    current = &mut node.next;
-                }
-                None => {
-                    *current = Some(new);
+            if next.is_some() {
+                let next_key = &next.as_ref().unwrap().key;
+
+                if next_key == key {
+                    return Err(new.value);
+                } else if next_key > key {
+                    // insert for sorted keys
+                    mem::swap(next, &mut new.next);
+                    let _ = mem::replace(next, Some(new));
+
                     return Ok(());
                 }
+
+                current = next.as_mut().unwrap();
+            } else {
+                *next = Some(new);
+                return Ok(());
             }
         }
     }
@@ -100,7 +144,7 @@ where
     }
 }
 
-impl<K, V> Drop for LinkedList<K, V> {
+impl<K, V> Drop for SortedList<K, V> {
     fn drop(&mut self) {
         let mut node = self.head.next.take();
 
